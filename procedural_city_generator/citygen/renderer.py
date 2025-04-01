@@ -75,37 +75,48 @@ class ZoneRenderer:
             interpolation="bilinear"
         )
 
-        # 3. Draw roads and intersections (as in your CityRenderer)
+        # 3. Draw roads and intersections (using three pipe types)
         intersection_points = set()
         labels_drawn = set()
         for road in self.city_data["roads"]:
             start, end = road["start"], road["end"]
-            if road.get("is_highway"):
-                style = "g-"
-                lw = 2
-                label = "Highway" if "Highway" not in labels_drawn else None
-                labels_drawn.add("Highway")
+            pipe_type = road.get("pipe_type", "side")
+            if pipe_type == "main":
+                style = "g-"      # green solid line
+                lw = 3            # thick stroke for main roads
+                label = "Main Road" if "Main Road" not in labels_drawn else None
+                labels_drawn.add("Main Road")
+            elif pipe_type == "side":
+                style = "r-"      # red solid line
+                lw = 1            # thinner stroke for side roads
+                label = "Side Road" if "Side Road" not in labels_drawn else None
+                labels_drawn.add("Side Road")
+            elif pipe_type == "building connection":
+                style = "b-"     # blue dashed line
+                lw = 1            # intermediate stroke width
+                label = "Building Connection" if "Building Connection" not in labels_drawn else None
+                labels_drawn.add("Building Connection")
             else:
-                style = "r-"
+                style = "k-"
                 lw = 1
-                label = "Road" if "Road" not in labels_drawn else None
-                labels_drawn.add("Road")
+                label = "Unknown Road" if "Unknown Road" not in labels_drawn else None
+                labels_drawn.add("Unknown Road")
+                
             ax.plot([start[0], end[0]], [start[1], end[1]], style, linewidth=lw, label=label)
             intersection_points.add(tuple(start))
             intersection_points.add(tuple(end))
         
+        # Draw intersections
         for pt in intersection_points:
             scatter_label = "Intersection" if "Intersection" not in labels_drawn else None
             ax.scatter(pt[0], pt[1], color="blue", s=20, label=scatter_label)
             labels_drawn.add("Intersection")
         
         # 4. Draw buildings with colors based on their district
-        # Also scatter building centers for clarity.
         for building in self.city_data.get("buildings", []):
             if "corners" not in building:
                 continue
             corners = building["corners"]
-            # Determine district; fallback to "undefined" if not assigned.
             district = building.get("district", "undefined")
             face_color = self.district_colors.get(district, "gray")
             label = f"{district.capitalize()} Building" if district.capitalize() not in labels_drawn else None
@@ -114,7 +125,6 @@ class ZoneRenderer:
             poly = MplPolygon(corners, closed=True, color=face_color, alpha=0.7, label=label)
             ax.add_patch(poly)
             
-            # Scatter the building center if available.
             if "center" in building:
                 center = building["center"]
                 ax.scatter(center[0], center[1], color=face_color, edgecolor="k", s=30)
@@ -143,7 +153,6 @@ class ZoneRenderer:
                 terrain[j, i] = val * HEIGHT_MAP_AMPLITUDE
         return terrain
 
-# Run the zone renderer if executed directly
 if __name__ == "__main__":
     renderer = ZoneRenderer("city_data.json")
     renderer.render()
