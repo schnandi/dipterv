@@ -3,25 +3,133 @@ import numpy as np
 import pandapipes as pp
 import pandapipes.plotting as plot
 import matplotlib.pyplot as plt
+import pandas as pd
+import pandapower.control as control
+from pandapower.timeseries import DFData, OutputWriter
+from pandapipes.timeseries import run_timeseries
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 import matplotlib.patches as mpatches
 
-# --- Parameters for Convergence ---
-height_scale = 1.0    # Scale down computed junction heights (e.g. 1% of original)
-new_ext_grid_pressure = 5.0  # External grid pressure in bar
+# ------------------ Define Consumption Functions ------------------
+def single_family_consumption(t):
+    baseline = 0.2
+    morning_peak = 1.0 * np.exp(-((t - 8) / 1.5) ** 2)
+    evening_peak = 1.2 * np.exp(-((t - 19) / 1.5) ** 2)
+    return baseline + morning_peak + evening_peak
 
-# --- Step 1: Load JSON Data ---
+def apartment_consumption(t):
+    baseline = 0.3
+    morning_peak = 0.8 * np.exp(-((t - 8) / 1.2) ** 2)
+    evening_peak = 0.9 * np.exp(-((t - 19) / 1.2) ** 2)
+    return baseline + morning_peak + evening_peak
+
+def restaurant_consumption(t):
+    baseline = 0.1
+    lunch_peak = 1.5 * np.exp(-((t - 12) / 0.8) ** 2)
+    dinner_peak = 2.0 * np.exp(-((t - 20) / 1.0) ** 2)
+    return baseline + lunch_peak + dinner_peak
+
+def office_consumption(t):
+    ramp_up = 1 / (1 + np.exp(-2 * (t - 8)))
+    ramp_down = 1 / (1 + np.exp(2 * (t - 17)))
+    return 0.2 + 0.8 * ramp_up * ramp_down
+
+def hospital_consumption(t):
+    return 1.0 + 0.1 * np.sin(2 * np.pi * (t - 6) / 24)
+
+def library_consumption(t):
+    baseline = 0.2
+    peak = 1.0 * np.exp(-((t - 14) / 1.0) ** 2)
+    return baseline + peak
+
+def school_consumption(t):
+    baseline = 0.2
+    morning_peak = 1.2 * np.exp(-((t - 8) / 1.0) ** 2)
+    afternoon_peak = 1.0 * np.exp(-((t - 15) / 1.0) ** 2)
+    return baseline + morning_peak + afternoon_peak
+
+def factory_consumption(t):
+    base = 1.8
+    midday_hump = 0.2 * np.exp(-((t - 12) / 2)**2)
+    return base + midday_hump
+
+def warehouse_consumption(t):
+    key_times = np.array([0, 8, 18, 24])
+    key_values = np.array([0.5, 1.5, 1.5, 0.5])
+    return np.interp(t, key_times, key_values)
+
+def processing_plant_consumption(t):
+    base = 1.2
+    midday_dip = -0.2 * np.exp(-((t - 13) / 1)**2)
+    return base + midday_dip
+
+def base_consumption(t):
+    return np.ones_like(t)
+
+# consumption_functions = {
+#     "single_family": single_family_consumption,
+#     "apartment": apartment_consumption,
+#     "restaurant": restaurant_consumption,
+#     "office": office_consumption,
+#     "hospital": hospital_consumption,
+#     "library": library_consumption,
+#     "school": school_consumption,
+#     "factory": factory_consumption,
+#     "warehouse": warehouse_consumption,
+#     "processing_plant": processing_plant_consumption
+# }
+
+consumption_functions = {
+    "single_family": base_consumption,
+    "apartment": base_consumption,
+    "restaurant": base_consumption,
+    "office": base_consumption,
+    "hospital": base_consumption,
+    "library": base_consumption,
+    "school": base_consumption,
+    "factory": base_consumption,
+    "warehouse": base_consumption,
+    "processing_plant": base_consumption
+}
+
+# ------------------ Define Pipe Roughness Function ------------------
+def get_pipe_roughness():
+    age = np.random.uniform(0, 100)
+    roughness = 0.0015 + (0.3 - 0.0015) * (age / 100.0)
+    return roughness
+
+# ------------------ Parameters ------------------
+height_scale = 1
+new_ext_grid_pressure = 5
+
+# Baseline daily consumption for a single-family home, now set to 150 L/day.
+baseline_daily = 150  # L/day
+
+# Multipliers for other building types relative to a single-family home.
+multipliers = {
+    "single_family": 1.0,
+    "apartment": 7.0,
+    "restaurant": 2.0,
+    "office": 2.5,
+    "hospital": 4.0,
+    "library": 1.0,
+    "school": 2.0,
+    "factory": 3.0,
+    "warehouse": 1.5,
+    "processing_plant": 2.5
+}
+
+# ------------------ Step 1: Load JSON Data ------------------
 with open("city_data.json", "r") as f:
     city_data = json.load(f)
 
-# --- Step 2: Compute Unique Junctions and Their Heights ---
-junction_coords = {}      # Maps coordinate tuple to junction index.
-junction_list = []        # List of coordinate tuples.
-junction_heights = {}     # Maps coordinate tuple to list of height values from roads.
+# ------------------ Step 2: Compute Unique Junctions and Their Heights ------------------
+junction_coords = {}
+junction_list = []
+junction_heights = {}
 
 for road in city_data["roads"]:
-    # Process start point.
     pt_start = tuple(road["start"])
     height_start = road.get("start_height", 0)
     if pt_start not in junction_coords:
@@ -30,7 +138,6 @@ for road in city_data["roads"]:
         junction_heights[pt_start] = [height_start]
     else:
         junction_heights[pt_start].append(height_start)
-    # Process end point.    
     pt_end = tuple(road["end"])
     height_end = road.get("end_height", 0)
     if pt_end not in junction_coords:
@@ -40,63 +147,47 @@ for road in city_data["roads"]:
     else:
         junction_heights[pt_end].append(height_end)
 
-# Compute average height for each junction and scale it down.
-avg_junction_heights = {}
-for pt, heights in junction_heights.items():
-    avg_junction_heights[pt] = np.mean(heights) * height_scale
+avg_junction_heights = {pt: np.mean(heights) * height_scale for pt, heights in junction_heights.items()}
 
-# --- Step 3: Create a pandapipes Network ---
+# ------------------ Step 3: Create a pandapipes Network ------------------
 net = pp.create_empty_network(fluid="water")
-
-# Create junctions with scaled heights.
 for coord in junction_list:
     scaled_height = avg_junction_heights.get(coord, 0)
     pp.create_junction(
         net,
-        pn_bar=1.0,           # Initial pressure (bar); adjust as needed.
-        tfluid_k=293.15,      # Fluid temperature (K).
-        height_m=scaled_height,  # Scaled height above sea level.
+        pn_bar=1.0,
+        tfluid_k=293.15,
+        height_m=scaled_height,
         name=f"Junction {coord}",
         geodata={"x": coord[0], "y": coord[1]}
     )
 
-# --- Supply the Network: Add an External Grid ---
-# First, get all junction coordinates that are endpoints of a "main" pipe.
+# ------------------ External Grid: Connect to Highest Junction on a Main Pipe ------------------
 main_pipe_coords = set()
 for road in city_data["roads"]:
     if road.get("pipe_type", "side") == "main":
         main_pipe_coords.add(tuple(road["start"]))
         main_pipe_coords.add(tuple(road["end"]))
-
-# Choose the supply junction: highest among main pipe endpoints if available,
-# otherwise default to the overall highest junction.
 if main_pipe_coords:
     supply_junction_coord = max(main_pipe_coords, key=lambda pt: avg_junction_heights.get(pt, 0))
 else:
     supply_junction_coord = max(avg_junction_heights, key=avg_junction_heights.get)
-
 supply_junction_index = junction_coords[supply_junction_coord]
 pp.create_ext_grid(
     net,
     junction=supply_junction_index,
-    p_bar=new_ext_grid_pressure,  # Increased supply pressure (bar).
+    p_bar=new_ext_grid_pressure,
     t_k=293.15,
     name="External Grid"
 )
 
-# --- Step 4: Define and Create Pipes ---
+# ------------------ Step 4: Create Pipes with Random Roughness ------------------
+default_pipe_type = "side"
 pipe_type_diameters = {
-    "main": 0.6,               # Main road pipe: larger.
-    "side": 0.4,               # Side road pipe: medium.
-    "building connection": 0.2 # Building connection pipe: smaller.
-}
-pipe_type_k_mm = {
-    "main": 0.2,
-    "side": 0.2,
+    "main": 0.6,
+    "side": 0.4,
     "building connection": 0.2
 }
-default_pipe_type = "side"
-
 for road in city_data["roads"]:
     pt_start = tuple(road["start"])
     pt_end = tuple(road["end"])
@@ -105,10 +196,10 @@ for road in city_data["roads"]:
     
     pipe_type = road.get("pipe_type", default_pipe_type)
     diameter = pipe_type_diameters.get(pipe_type, pipe_type_diameters["side"])
-    k_mm = pipe_type_k_mm.get(pipe_type, 0.2)
+    k_mm = get_pipe_roughness()
     
     length = np.linalg.norm(np.array(pt_end) - np.array(pt_start))
-    length_km = length / 5000.0
+    length_km = length / 100.0
     
     pp.create_pipe_from_parameters(
         net,
@@ -120,21 +211,16 @@ for road in city_data["roads"]:
         name=f"Pipe {pt_start} -> {pt_end}"
     )
 
-# --- Step 5: Add Buildings as Sinks ---
-# Further reduce consumption by lowering the scaling factor.
-sink_scaling_factor = 0.01  # [kg/s per square meter].
-# Get the junction index where the external grid is connected:
+# ------------------ Step 5: Add Buildings as Sinks with Consumption Based on Building Type ------------------
+# Now, the nominal daily consumption (L/day) is defined based solely on the building type.
+sink_info = []
 ext_grid_junction_index = net.ext_grid["junction"].iloc[0]
+
 for idx, building in enumerate(city_data.get("buildings", [])):
     center = tuple(building["center"])
-    width = building.get("width", 50)
-    height = building.get("height", 50)
-    consumption = width * height * sink_scaling_factor  # kg/s consumption.
-
-    # If the building's junction is the same as the ext grid junction, skip creating a sink.
+    building_type = building.get("building_type", "single_family")
     if center in junction_coords and junction_coords[center] == ext_grid_junction_index:
         continue
-    
     if center in junction_coords:
         j_building = junction_coords[center]
     else:
@@ -148,12 +234,20 @@ for idx, building in enumerate(city_data.get("buildings", [])):
         )
         junction_coords[center] = j_building
     
+    noise = np.random.uniform(0.9, 1.1)
+    nominal_daily_L = baseline_daily * multipliers.get(building_type, 1.0) * noise
+    nominal_kg_s = nominal_daily_L / 86400.0
+    
     pp.create_sink(
         net,
         junction=j_building,
-        mdot_kg_per_s=consumption,
+        mdot_kg_per_s=nominal_kg_s,
         name=f"Sink {idx+1}"
     )
+    sink_info.append((len(sink_info), building_type, nominal_kg_s))
+
+print("Network built. Number of sinks:", len(net.sink))
+
 
 # --- Step 6: Run the Pipeflow Simulation ---
 # Increase max iterations and tighten tolerances to improve convergence chances.
@@ -171,7 +265,7 @@ except:
 if net.converged:
     print("Single-step pipeflow converged.")
     print("Network built. Number of sinks:", len(net.sink))
-    print(net.res_junction)
+    #print(net.res_junction)
 else:
     print("Single-step pipeflow did NOT converge.")
 
@@ -204,30 +298,30 @@ print(f"Number of reachable junctions: {len(reachable)} out of {len(net.junction
 # --- Print Pipe Lengths and Junction Pressures in Descending Order ---
 print("\nPipes sorted by descending length with junction pressures:")
 
-# Gather pipe info into a list
-pipe_info = []
-for pipe_idx in net.pipe.index:
-    pipe = net.pipe.loc[pipe_idx]
+# # Gather pipe info into a list
+# pipe_info = []
+# for pipe_idx in net.pipe.index:
+#     pipe = net.pipe.loc[pipe_idx]
 
-    length_m = pipe["length_km"] * 1000
-    from_junction = pipe["from_junction"]
-    to_junction = pipe["to_junction"]
+#     length_m = pipe["length_km"] * 1000
+#     from_junction = pipe["from_junction"]
+#     to_junction = pipe["to_junction"]
 
-    p_from = net.res_junction.at[from_junction, "p_bar"]
-    p_to = net.res_junction.at[to_junction, "p_bar"]
+#     p_from = net.res_junction.at[from_junction, "p_bar"]
+#     p_to = net.res_junction.at[to_junction, "p_bar"]
 
-    pipe_info.append((pipe_idx, length_m, from_junction, p_from, to_junction, p_to))
+#     pipe_info.append((pipe_idx, length_m, from_junction, p_from, to_junction, p_to))
 
-# Sort the pipes by descending length
-pipe_info.sort(key=lambda x: x[1], reverse=True)
+# # Sort the pipes by descending length
+# pipe_info.sort(key=lambda x: x[1], reverse=True)
 
-# Print sorted information
-for pipe_idx, length_m, from_junction, p_from, to_junction, p_to in pipe_info:
-    print(
-        f"Pipe {pipe_idx}: Length = {length_m:.2f} m | "
-        f"Pressure from_junction ({from_junction}) = {p_from:.4f} bar | "
-        f"to_junction ({to_junction}) = {p_to:.4f} bar"
-    )
+# # Print sorted information
+# for pipe_idx, length_m, from_junction, p_from, to_junction, p_to in pipe_info:
+#     print(
+#         f"Pipe {pipe_idx}: Length = {length_m:.2f} m | "
+#         f"Pressure from_junction ({from_junction}) = {p_from:.4f} bar | "
+#         f"to_junction ({to_junction}) = {p_to:.4f} bar"
+#     )
 
 
 
@@ -326,15 +420,26 @@ for j_idx in net.junction.index:
     height = net.junction.at[j_idx, "height_m"]
 
     # Pressure to the right
-    ax.text(
-        x + 20, y, f"{pressure:.2f} bar",
-        fontsize=5,
-        ha='left',
-        va='center',
-        color='black',
-        bbox=dict(facecolor='white', alpha=0.3, edgecolor='none', pad=0.2),
-        zorder=30
-    )
+# Check if pressure is NaN
+    if np.isnan(pressure):
+        # Draw red text indicating NaN pressure with larger fontsize
+        ax.text(
+            x, y, "NaN", fontsize=5, ha='left', va='center',
+            color='red',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=0.2),
+            zorder=30
+        )
+        # Also draw a larger red marker at the junction location
+        #ax.scatter(x, y, color='red', s=1, marker='o', zorder=35)
+    else:
+        # Draw pressure normally (black text, smaller marker)
+        ax.text(
+            x + 20, y, f"{pressure:.2f} bar", fontsize=5, ha='left', va='center',
+            color='black',
+            bbox=dict(facecolor='white', alpha=0.3, edgecolor='none', pad=0.2),
+            zorder=30
+        )
+        #ax.scatter(x, y, color='black', s=1, marker='o', zorder=30)
 
     # Height to the left
     ax.text(
@@ -392,6 +497,7 @@ ax.imshow(
 
 # Ensure the plot stays square and neat
 ax.set_aspect('equal', adjustable='box')
+
 
 plt.show()
 

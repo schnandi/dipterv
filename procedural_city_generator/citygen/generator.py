@@ -464,29 +464,44 @@ class CityGenerator:
                                     del self.intersection_count[old_endpoint]
                             self.intersection_count[new_endpoint] = self.intersection_count.get(new_endpoint, 0) + 1
 
-    def assign_building_districts(self, n_clusters=3):
-        """
-        Clusters buildings into n_clusters using their center coordinates and assigns
-        a district and a building type to each.
-        """
-        if not self.buildings:
-            return
-
-        coords = np.array([b.center for b in self.buildings])
-        kmeans = KMeans(n_clusters=n_clusters, random_state=self.seed)
-        labels = kmeans.fit_predict(coords)
+    def assign_building_districts(self):
+        total_buildings = len(self.buildings)
+        # Define an industrial center; here we choose a point near the top-right edge.
+        industrial_center = np.array([self.map_size[0] * 0.9, self.map_size[1] * 0.9])
         
-        district_building_types = {
-            0: {"district": "residential", "types": (["house", "apartment", "small_business"], [0.7, 0.2, 0.1])},
-            1: {"district": "commercial",  "types": (["shop", "office", "restaurant"], [0.4, 0.4, 0.2])},
-            2: {"district": "industrial",  "types": (["factory", "warehouse", "distribution_center"], [0.5, 0.3, 0.2])},
-        }
+        # Get building centers as a numpy array.
+        centers = np.array([b.center for b in self.buildings])
+        # Compute distances from each building to the industrial center.
+        distances = np.linalg.norm(centers - industrial_center, axis=1)
+        
+        # Sort building indices by distance (closest first).
+        sorted_indices = np.argsort(distances)
+        # Calculate how many should be industrial (~20%).
+        num_industrial = int(total_buildings * 0.2)
+        industrial_indices = set(sorted_indices[:num_industrial])
         
         for i, building in enumerate(self.buildings):
-            label = labels[i]
-            mapping = district_building_types[label]
-            building.district = mapping["district"]
-            building.building_type = np.random.choice(mapping["types"][0], p=mapping["types"][1])
+            if i in industrial_indices:
+                building.district = "industrial"
+                building.building_type = np.random.choice(
+                    ["factory", "warehouse", "processing_plant"],
+                    p=[0.4, 0.4, 0.2]
+                )
+            else:
+                building.district = "residential"
+                building.building_type = np.random.choice(
+                    ["single_family", "apartment", "restaurant", "office"],
+                    p=[0.5, 0.3, 0.1, 0.1]
+                )
+        
+        # Optionally, designate a few special civic buildings among the residential ones.
+        residential_buildings = [b for b in self.buildings if b.district == "residential"]
+        if len(residential_buildings) >= 3:
+            civic_types = ["hospital", "library", "school"]
+            selected = random.sample(residential_buildings, len(civic_types))
+            for building, civic in zip(selected, civic_types):
+                building.building_type = civic
+
 
     def generate(self):
         """Run procedural road generation using a priority queue."""

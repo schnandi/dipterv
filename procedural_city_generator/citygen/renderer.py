@@ -41,10 +41,9 @@ class ZoneRenderer:
             self.city_data = json.load(f)
             self.seed = self.city_data.get("seed", 0)
             
-        # Define a color mapping for districts.
+        # Define a color mapping for the two districts.
         self.district_colors = {
             "residential": "lightblue",
-            "commercial": "lightgreen",
             "industrial": "lightcoral",
             # fallback color if no district assigned:
             "undefined": "gray"
@@ -52,7 +51,7 @@ class ZoneRenderer:
 
     def render(self):
         fig, ax = plt.subplots(figsize=(8, 8))
-        ax.set_title("City Zones and Building Types")
+        ax.set_title("City Zones and Building Types (Residential & Industrial)")
         ax.set_xlabel("X Coordinate")
         ax.set_ylabel("Y Coordinate")
 

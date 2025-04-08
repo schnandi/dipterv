@@ -61,8 +61,20 @@ for coord in junction_list:
     )
 
 # --- Supply the Network: Add an External Grid ---
-# Choose the junction with the highest scaled height as the supply node.
-supply_junction_coord = max(avg_junction_heights, key=avg_junction_heights.get)
+# First, get all junction coordinates that are endpoints of a "main" pipe.
+main_pipe_coords = set()
+for road in city_data["roads"]:
+    if road.get("pipe_type", "side") == "main":
+        main_pipe_coords.add(tuple(road["start"]))
+        main_pipe_coords.add(tuple(road["end"]))
+
+# Choose the supply junction: highest among main pipe endpoints if available,
+# otherwise default to the overall highest junction.
+if main_pipe_coords:
+    supply_junction_coord = max(main_pipe_coords, key=lambda pt: avg_junction_heights.get(pt, 0))
+else:
+    supply_junction_coord = max(avg_junction_heights, key=avg_junction_heights.get)
+
 supply_junction_index = junction_coords[supply_junction_coord]
 pp.create_ext_grid(
     net,
