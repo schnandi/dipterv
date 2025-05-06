@@ -23,6 +23,7 @@ town_output_model = ns.model('TownOutput', {
 })
 
 town_detail_model = ns.inherit('TownDetail', town_output_model, {
+    'name': fields.String(description='Town name (if provided)'),
     'data': fields.Raw(description='Full generated town JSON data')
 })
 
@@ -87,3 +88,21 @@ class TownDetail(Resource):
         """
         town = Town.query.get_or_404(town_id, description="Town not found")
         return town.to_full_dict()
+
+    @ns.expect(town_input_model)
+    @ns.doc('rename_town')
+    def put(self, town_id):
+        """Rename an existing town."""
+        town = Town.query.get_or_404(town_id)
+        payload = request.get_json(force=True) or {}
+        town.name = payload.get('name', town.name)
+        db.session.commit()
+        return town.to_dict()
+
+    @ns.doc('delete_town')
+    def delete(self, town_id):
+        """Delete a town."""
+        town = Town.query.get_or_404(town_id)
+        db.session.delete(town)
+        db.session.commit()
+        return {'message': 'Town deleted'}

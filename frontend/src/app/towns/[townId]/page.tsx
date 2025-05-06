@@ -1,0 +1,265 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+'use client'
+
+import React, { useState } from 'react'
+import dynamic from 'next/dynamic'
+import useSWR, { useSWRConfig } from 'swr'
+import { useRouter, useParams } from 'next/navigation'
+import {
+    Box,
+    Flex,
+    Heading,
+    Button,
+    ButtonGroup,
+    Spinner,
+    Text,
+    HStack,
+    IconButton,
+} from '@chakra-ui/react'
+import { LuArrowLeft } from 'react-icons/lu'
+import { api } from '../../../lib/api'
+import TownMap from '../../../components/ui/town/TownMap'
+import TownMapSim from '../../../components/ui/town/TownMapSim'
+import SimulationControls from '../../../components/ui/town/SimulationControls'
+
+// dynamically import drawer so it never SSR’s
+const SideDrawer = dynamic(
+    () => import('../../../components/ui/town/SideDrawer'),
+    { ssr: false }
+)
+
+interface TownData {
+    name: string
+    data: {
+        roads: any[]
+        buildings: any[]
+    }
+    seed: number
+}
+
+interface SimulationSummary {
+    id: number
+    title: string
+    town_id: number
+}
+
+interface ExternalGrid {
+    junction: number
+    coord: [number, number]
+}
+
+interface PumpInfo {
+    pump_index: number
+    from_junction: number
+    to_junction: number
+    from_coord: [number, number]
+    to_coord: [number, number]
+}
+
+interface SimulationFull extends SimulationSummary {
+    details: {
+        timestamps: string[]
+        junction_pressures: Record<string, number[]>
+        pipe_velocities: Record<string, number[]>
+        sink_flows: Record<string, number[]>
+        pipe_parameters: Record<string, {
+            name: string
+            from_junction: number
+            to_junction: number
+            length_m: number
+            diameter_m: number
+            k_mm: number
+            material?: string | null
+            max_velocity_m_per_s?: number | null
+        }>
+        external_grid: ExternalGrid
+        pumps: PumpInfo[]
+    }
+}
+
+export default function TownDetailPage() {
+    const router = useRouter()
+    const params = useParams()
+    const townId = Array.isArray(params.townId) ? params.townId[0] : params.townId!
+
+    // local UI state
+    const [frame, setFrame] = useState(0)
+    const [isPlaying, setPlaying] = useState(false)
+    const [speed, setSpeed] = useState(1)
+    const [selected, setSelected] = useState<{ type: 'road' | 'building' | 'junction'; id: number } | null>(null)
+    const [viewMode, setViewMode] = useState<'edit' | 'simulate'>('edit')
+
+    // fetch town geometry
+    const { data: townData, error, isLoading } = useSWR<TownData>(
+        `/towns/${townId}`, url => api.get(url).then(r => r.data)
+    )
+
+    // fetch simulation summaries
+    const { data: sims, isLoading: simsLoading } = useSWR<SimulationSummary[]>(
+        `/simulations/town/${townId}`, url => api.get(url).then(r => r.data)
+    )
+    const sim = sims?.[0] ?? null
+
+    // fetch full simulation details
+    const { data: simDetail, isLoading: simDetailLoading } = useSWR<SimulationFull>(
+        sim ? `/simulations/${sim.id}` : null,
+        url => api.get(url).then(r => r.data)
+    )
+
+    console.log(simDetail)
+
+    // create simulation helper
+    const { mutate } = useSWRConfig()
+    const createSim = async () => {
+        await api.post('/simulations', {
+            title: `Sim for town ${townId}`,
+            town_id: Number(townId),
+        })
+        mutate(`/simulations/town/${townId}`)
+    }
+
+    if (isLoading) return <Spinner />
+    if (error) return <Text color="red.500">Failed to load town.</Text>
+
+    // build the object that SideDrawer needs
+    let drawerItem: any = null
+    if (selected) {
+        if (viewMode === 'simulate' && simDetail) {
+            // simulation-mode: timestamp + numeric value
+            const ts = simDetail.details.timestamps[frame]
+            let val = 0
+            if (selected.type === 'road') {
+                val = simDetail.details.pipe_velocities[`v_mean_pipe_${selected.id}`][frame]
+                // grab the static pipe info and merge it in:
+                const staticInfo = simDetail.details.pipe_parameters[selected.id] || {}
+                const geo = townData!.data.roads.find(r => r.id === selected.id) || {}
+                drawerItem = {
+                    type: 'road',
+                    id: selected.id,
+                    timestamp: ts,
+                    value: val,
+                    ...staticInfo,
+                    ...geo
+                }
+            } else if (selected.type === 'building') {
+                val = simDetail.details.sink_flows[`mdot_sink_${selected.id}`][frame]
+                const geo = townData!.data.buildings.find(b => b.id === selected.id) || {}
+                drawerItem = {
+                    type: selected.type,
+                    id: selected.id,
+                    timestamp: ts,
+                    value: val,
+                    ...geo
+                }
+            } else {
+                val = simDetail.details.junction_pressures[`p_bar_junction_${selected.id}`][frame]
+                drawerItem = {
+                    type: selected.type,
+                    id: selected.id,
+                    timestamp: ts,
+                    value: val
+                }
+            }
+        } else {
+            // edit-mode: show raw geometry object
+            if (selected.type === 'road') {
+                drawerItem = townData!.data.roads.find(r => r.id === selected.id)
+            } else {
+                drawerItem = townData!.data.buildings.find(b => b.id === selected.id)
+            }
+        }
+    }
+
+    return (
+        <Flex direction="column" h="100vh" overflow="hidden">
+            <Flex p="4" gap="12" align="center">
+                <IconButton
+                    aria-label="Back to towns"
+                    variant="ghost"
+                    onClick={() => router.push('/towns')}
+                >
+                    <LuArrowLeft />
+                </IconButton>
+
+                <Heading size="xl">
+                    {townData?.seed && `${townData.name} (seed ${townData.seed})`}
+                </Heading>
+
+                {simsLoading ? (
+                    <Spinner size="sm" marginEnd="auto" />
+                ) : sim ? (
+                    <HStack marginEnd="auto">
+                        <Box w={2} h={2} bg="green.500" borderRadius="full" />
+                        <Text>Simulation is ready</Text>
+                    </HStack>
+                ) : (
+                    <Button colorScheme="green" onClick={createSim} marginEnd="auto">
+                        Generate Simulation
+                    </Button>
+                )}
+
+                <ButtonGroup>
+                    <Button
+                        variant={viewMode === 'edit' ? 'solid' : 'outline'}
+                        onClick={() => setViewMode('edit')}
+                    >
+                        Edit
+                    </Button>
+                    <Button
+                        variant={viewMode === 'simulate' ? 'solid' : 'outline'}
+                        onClick={() => setViewMode('simulate')}
+                    >
+                        Simulate
+                    </Button>
+                </ButtonGroup>
+            </Flex>
+
+            <Box flex="1" position="relative">
+                {viewMode === 'edit' ? (
+                    <TownMap
+                        roads={townData!.data.roads}
+                        buildings={townData!.data.buildings}
+                        junctions={{}}
+                        frame={frame}
+                        onSelect={setSelected}
+                    />
+                ) : simDetailLoading ? (
+                    <Flex h="100%" align="center" justify="center">
+                        <Spinner size="xl" />
+                    </Flex>
+                ) : simDetail ? (
+                    <TownMapSim
+                        roads={townData!.data.roads}
+                        buildings={townData!.data.buildings}
+                        junctions={simDetail.details.junction_pressures}
+                        pipeVelocities={simDetail.details.pipe_velocities}
+                        sinkFlows={simDetail.details.sink_flows}
+                        frame={frame}
+                        onSelect={setSelected}
+                        externalGrid={simDetail.details.external_grid}
+                        pumps={simDetail.details.pumps}
+                    />
+                ) : null}
+
+                {viewMode === 'simulate' && simDetail && (
+                    <SimulationControls
+                        frame={frame}
+                        setFrame={setFrame}
+                        maxFrame={simDetail.details.timestamps.length - 1}
+                        isPlaying={isPlaying}
+                        setPlaying={setPlaying}
+                        speed={speed}
+                        setSpeed={setSpeed}
+                    />
+                )}
+            </Box>
+
+            <SideDrawer
+                open={!!selected}
+                onOpenChange={() => setSelected(null)}
+                item={drawerItem}
+                isSim={viewMode === 'simulate'}
+            />
+        </Flex>
+    )
+}

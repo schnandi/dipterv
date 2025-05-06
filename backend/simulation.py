@@ -72,7 +72,7 @@ consumption_functions = {
 }
 
 def simulate_water_network(city_data):
-    height_scale = 1.0
+    height_scale = 10.0
     new_ext_grid_pressure = 5.0
     baseline_daily = 150.0
     multipliers = {
@@ -136,9 +136,9 @@ def simulate_water_network(city_data):
     )
 
     pipe_type_diameters = {
-        "main": 0.6,
-        "side": 0.4,
-        "building connection": 0.2
+        "main": 0.1,
+        "side": 0.05,
+        "building connection": 0.02
     }
     for road in city_data["roads"]:
         pt_start = tuple(road["start"])
@@ -161,6 +161,39 @@ def simulate_water_network(city_data):
             name=f"Pipe {pt_start} -> {pt_end}",
             index=road["id"]
         )
+
+    # --- pick the two farthest‐apart junctions on main pipes, and hook a pump between them ---
+    # 1) gather all junction indices on main roads
+    main_juncs = set()
+    for road in city_data["roads"]:
+        if road.get("pipe_type", "side") == "main":
+            main_juncs.add(junction_coords[tuple(road["start"])])
+            main_juncs.add(junction_coords[tuple(road["end"])])
+    # 2) need a reverse mapping index → coord
+    index_to_coord = { idx: coord for coord, idx in junction_coords.items() }
+    # 3) find the diametral pair
+    if len(main_juncs) >= 2:
+        best_pair = None
+        max_d = 0.0
+        for i in main_juncs:
+            x1, y1 = index_to_coord[i]
+            for j in main_juncs:
+                if j <= i:
+                    continue
+                x2, y2 = index_to_coord[j]
+                d = np.hypot(x1 - x2, y1 - y2)
+                if d > max_d:
+                    max_d = d
+                    best_pair = (i, j)
+        # 4) insert pump
+        if best_pair is not None:
+            pp.create_pump(
+                net,
+                from_junction=best_pair[0],
+                to_junction=best_pair[1],
+                std_type="P3"
+            )
+
 
     sink_info = []
     ext_grid_junction_index = net.ext_grid["junction"].iloc[0]
@@ -234,6 +267,45 @@ def simulate_water_network(city_data):
 
     timestamps = pd.date_range("2025-01-01", periods=96, freq="15min").strftime("%Y-%m-%d %H:%M:%S").tolist()
 
+    pipe_params = {}
+    for _, row in net.pipe.iterrows():
+        pid = int(row.name)  # this is the pipe index you passed in
+        pipe_params[pid] = {
+            "name": row["name"],
+            "from_junction": int(row["from_junction"]),
+            "to_junction": int(row["to_junction"]),
+            "length_m": float(row["length_km"] * 1e3),
+            "diameter_m": float(row["diameter_m"]),
+            "k_mm": float(row["k_mm"]),
+            # you could also add any of these if you like:
+            "max_velocity_m_per_s": float(row["diameter_m"]),
+        }
+
+    # build a lookup for junction geodata
+    geo = {
+        int(i): (row.x, row.y)
+        for i, row in net.junction_geodata.iterrows()
+    }
+
+    external_grid = {
+        "junction": int(net.ext_grid.junction.iloc[0]),
+        "coord": geo[int(net.ext_grid.junction.iloc[0])],
+    }
+
+    pumps = []
+    if hasattr(net, 'pump'):
+        for pid, pump in net.pump.iterrows():
+            pj = int(pump.from_junction)
+            pj2 = int(pump.to_junction)
+            pumps.append({
+                "pump_index": int(pid),
+                "from_junction": pj,
+                "to_junction": pj2,
+                "from_coord": geo[pj],
+                "to_coord": geo[pj2],
+            })
+
+
     return {
         "timestamps": timestamps,
         "junction_pressures": collect_results(pd.DataFrame(
@@ -243,5 +315,8 @@ def simulate_water_network(city_data):
         "pipe_velocities": collect_results(pd.DataFrame(
             ow_dyn.np_results["res_pipe.v_mean_m_per_s"], columns=[f"pipe_{i}" for i in net.pipe.index]), "v_mean"),
         "external_grid_flows": collect_results(pd.DataFrame(
-            ow_dyn.np_results["res_ext_grid.mdot_kg_per_s"], columns=[f"ext_grid_{i}" for i in net.ext_grid.index]), "mdot")
+            ow_dyn.np_results["res_ext_grid.mdot_kg_per_s"], columns=[f"ext_grid_{i}" for i in net.ext_grid.index]), "mdot"),
+        "pipe_parameters": pipe_params,
+        "external_grid": external_grid,
+        "pumps": pumps
     }

@@ -536,7 +536,7 @@ if __name__ == "__main__":
         except ValueError:
             pass
     
-    generator = CityGenerator(map_size=(2000, 2000), seed=seed)
+    generator = CityGenerator(map_size=(2000, 2000), seed=1567)
     roads = generator.generate()
 
     # Build final JSON output, adding terrain heights to roads & buildings
