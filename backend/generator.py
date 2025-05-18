@@ -6,25 +6,12 @@ import math
 import random  # for generating a random seed if none provided
 
 # -------------------------- CONFIGURATION --------------------------
-CONFIG = {
-    "num_highways": 5,  # Number of main (previously highway) roads to generate
-    "highway_min_length": 150,  # Minimum length for a main road segment
-    "highway_max_length": 350,  # Maximum length for a main road segment
-    "side_road_min_length": 100,  # Minimum length for a side road segment
-    "side_road_max_length": 150,  # Maximum length for a side road segment
-    "highway_branch_angle_range": (-30, 30),  # Range (in degrees) for main road extension rotation
-    "side_road_branch_variation": (-5, 5),  # Variation (in degrees) added to perpendicular branches
-    "branch_probability": 0.7,  # Chance that a branch (side road) is created
-    "max_iterations": 200,  # Maximum iterations in the generation loop
-    "intersection_snap_distance": 100,  # Snap distance for non-main roads
-    "highway_snap_distance": 1,  # Snap distance for main roads
-
-    # Terrain / Height Map parameters:
-    "height_noise_scale": 1000,  # Larger scale => smoother, broader height changes
-    "height_octaves": 2,  # Number of octaves for Perlin noise
-    "height_amplitude": 100,  # Overall vertical range of heights
-    "min_intersection_separation": 5.0,  # Minimum distance between intersection points
-}
+CONFIG = {"num_highways": 5, "highway_min_length": 150, "highway_max_length": 350, "side_road_min_length": 100,
+          "side_road_max_length": 150, "highway_branch_angle_range": (-30, 30), "side_road_branch_variation": (-5, 5),
+          "branch_probability": 0.7, "max_iterations": 200, "intersection_snap_distance": 100,
+          "highway_snap_distance": 1, "height_noise_scale": 1000, "height_octaves": 6, "height_persistence": 0.5,
+          "height_lacunarity": 2.0, "height_amplitude": 100, "min_intersection_separation": 5.0, "height_curve_exponent": 1.5,
+          "height_map_resolution": (256, 256)}
 
 
 # --------------------------------------------------------------------
@@ -110,15 +97,24 @@ class CityGenerator:
 
     def _get_terrain_height(self, x, y):
         """
-        Compute terrain height at (x, y) using Perlin noise.
-        Scale and amplitude come from CONFIG.
+        Compute height via fractal Brownian motion (fBm) to avoid striping.
         """
-        scale = CONFIG["height_noise_scale"]
-        octaves = CONFIG["height_octaves"]
-        amplitude = CONFIG["height_amplitude"]
-        # Perlin noise returns ~[-1..1], so shift to [0..1], then multiply by amplitude
-        noise_val = pnoise2(x / scale, y / scale, octaves=octaves, base=self.seed)
-        return (noise_val + 1) / 2 * amplitude
+        noise_val = pnoise2(
+            x / CONFIG["height_noise_scale"],
+            y / CONFIG["height_noise_scale"],
+            octaves=CONFIG["height_octaves"],
+            persistence=CONFIG["height_persistence"],
+            lacunarity=CONFIG["height_lacunarity"],
+            base=self.seed
+        )
+        # normalize to [0,1]
+        h = (noise_val + 1) * 0.5
+
+        # bias towards low-elevation
+        exp = CONFIG["height_curve_exponent"]
+        h = h ** exp
+
+        return h * CONFIG["height_amplitude"]
 
     def _add_segment(self, segment):
         """Add a road segment to the network, tracking intersections."""
@@ -512,6 +508,44 @@ class CityGenerator:
             for building, civic in zip(selected, civic_types):
                 building.building_type = civic
 
+    def _generate_height_map(self, bounds):
+        """
+        Produce a 2D grid of heights over the given world‐space bounds,
+        at CONFIG["height_map_resolution"].
+        """
+        min_x, min_y, max_x, max_y = bounds
+        res_x, res_y = CONFIG["height_map_resolution"]
+
+        xs = np.linspace(min_x, max_x, res_x)
+        ys = np.linspace(min_y, max_y, res_y)
+
+        grid = []
+        for yy in ys:
+            row = [self._get_terrain_height(xx, yy) for xx in xs]
+            grid.append(row)
+        return grid
+
+    def _calculate_bounds(self, margin_ratio: float = 0.1):
+        """
+        Scan roads and building corners to find min/max X,Y, then pad by margin_ratio.
+        Returns (min_x, min_y, max_x, max_y).
+        """
+        xs, ys = [], []
+        for r in self.road_network:
+            xs.extend([r.start[0], r.end[0]])
+            ys.extend([r.start[1], r.end[1]])
+        for b in self.buildings:
+            for (x, y) in b.corners:
+                xs.append(x); ys.append(y)
+
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        # add a little padding around edges
+        dx = (max_x - min_x) * margin_ratio
+        dy = (max_y - min_y) * margin_ratio
+        return min_x - dx, min_y - dy, max_x + dx, max_y + dy
+
     def generate(self):
         """Run procedural road generation using a priority queue."""
         self._generate_main_roads()
@@ -534,9 +568,17 @@ class CityGenerator:
         self._generate_buildings_along_roads()
         self.assign_building_districts()
 
+        # populate height map
+        bounds = self._calculate_bounds(margin_ratio=0.1)
+
+        height_map = self._generate_height_map(bounds)
+
         # Build final JSON output, adding terrain heights to roads & buildings
         output_data = {
             "seed": self.seed,
+            "height_map_bounds": list(bounds),                # [min_x, min_y, max_x, max_y]
+            "height_map_resolution": CONFIG["height_map_resolution"],
+            "height_map": height_map,
             "roads": [],
             "buildings": [],
         }

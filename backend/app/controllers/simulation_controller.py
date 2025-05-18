@@ -60,7 +60,7 @@ class SimulationList(Resource):
         db.session.add(sim)
         db.session.commit()
 
-        return sim, 201
+        return '', 201
 
 @ns.route('/town/<int:town_id>')
 @ns.param('town_id', 'The town identifier')

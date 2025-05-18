@@ -72,20 +72,20 @@ consumption_functions = {
 }
 
 def simulate_water_network(city_data):
-    height_scale = 10.0
-    new_ext_grid_pressure = 5.0
+    height_scale = 1.0
+    new_ext_grid_pressure = 10.0
     baseline_daily = 150.0
     multipliers = {
-        "single_family": 1.0,
-        "apartment": 7.0,
-        "restaurant": 2.0,
-        "office": 4.0,
-        "hospital": 10.0,
-        "library": 2.0,
-        "school": 10.0,
-        "factory": 20.0,
-        "warehouse": 1.5,
-        "processing_plant": 2.5
+        "single_family": 4.0,
+        "apartment": 40.0,
+        "restaurant": 50.0,
+        "office": 10.0,
+        "hospital": 50.0,
+        "library": 10.0,
+        "school": 50.0,
+        "factory": 50.0,
+        "warehouse": 3.0,
+        "processing_plant": 10.0
     }
 
     junction_coords = {}
@@ -126,14 +126,63 @@ def simulate_water_network(city_data):
     else:
         supply_junction_coord = max(avg_junction_heights, key=avg_junction_heights.get)
     supply_junction_index = junction_coords[supply_junction_coord]
-    pp.create_ext_grid(
-        net,
-        junction=supply_junction_index,
-        p_bar=new_ext_grid_pressure,
-        t_k=293.15,
-        name="External Grid",
-        index=city_data.get("external_grid_id", 0)
-    )
+    # pp.create_ext_grid(
+    #     net,
+    #     junction=supply_junction_index,
+    #     p_bar=new_ext_grid_pressure,
+    #     t_k=293.15,
+    #     name="External Grid",
+    #     index=city_data.get("external_grid_id", 0)
+    # )
+    #
+    # pp.create_source(
+    #     net,
+    #     junction=supply_junction_index,
+    #     mdot_kg_per_s=1000.0,
+    #     index=9999
+    # )
+
+
+    # --- pick the two farthest‐apart junctions on main pipes, and hook a pump between them ---
+    # 1) gather all junction indices on main roads
+    main_juncs = set()
+    for road in city_data["roads"]:
+        if road.get("pipe_type", "side") == "main":
+            main_juncs.add(junction_coords[tuple(road["start"])])
+            main_juncs.add(junction_coords[tuple(road["end"])])
+    # 2) need a reverse mapping index → coord
+    index_to_coord = { idx: coord for coord, idx in junction_coords.items() }
+    # 3) find the diametral pair
+    if len(main_juncs) >= 2:
+        best_pair = None
+        max_d = 0.0
+        for i in main_juncs:
+            x1, y1 = index_to_coord[i]
+            for j in main_juncs:
+                if j <= i:
+                    continue
+                x2, y2 = index_to_coord[j]
+                d = np.hypot(x1 - x2, y1 - y2)
+                if d > max_d:
+                    max_d = d
+                    best_pair = (i, j)
+        # 4) insert pump
+        if best_pair is not None:
+            pp.create_ext_grid(
+                net,
+                junction=best_pair[0],
+                p_bar=new_ext_grid_pressure,
+                t_k=293.15,
+                name="External Grid",
+                index=city_data.get("external_grid_id", 0)
+            )
+
+            # pp.create_source(
+            #     net,
+            #     junction=best_pair[1],
+            #     mdot_kg_per_s=100.0,
+            #     index=9999
+            # )
 
     pipe_type_diameters = {
         "main": 0.1,
@@ -164,36 +213,65 @@ def simulate_water_network(city_data):
 
     # --- pick the two farthest‐apart junctions on main pipes, and hook a pump between them ---
     # 1) gather all junction indices on main roads
-    main_juncs = set()
-    for road in city_data["roads"]:
-        if road.get("pipe_type", "side") == "main":
-            main_juncs.add(junction_coords[tuple(road["start"])])
-            main_juncs.add(junction_coords[tuple(road["end"])])
-    # 2) need a reverse mapping index → coord
-    index_to_coord = { idx: coord for coord, idx in junction_coords.items() }
-    # 3) find the diametral pair
-    if len(main_juncs) >= 2:
-        best_pair = None
-        max_d = 0.0
-        for i in main_juncs:
-            x1, y1 = index_to_coord[i]
-            for j in main_juncs:
-                if j <= i:
-                    continue
-                x2, y2 = index_to_coord[j]
-                d = np.hypot(x1 - x2, y1 - y2)
-                if d > max_d:
-                    max_d = d
-                    best_pair = (i, j)
-        # 4) insert pump
-        if best_pair is not None:
-            pp.create_pump(
-                net,
-                from_junction=best_pair[0],
-                to_junction=best_pair[1],
-                std_type="P3"
-            )
+    # main_juncs = set()
+    # for road in city_data["roads"]:
+    #     if road.get("pipe_type", "side") == "main":
+    #         main_juncs.add(junction_coords[tuple(road["start"])])
+    #         main_juncs.add(junction_coords[tuple(road["end"])])
+    # # 2) need a reverse mapping index → coord
+    # index_to_coord = { idx: coord for coord, idx in junction_coords.items() }
+    # # 3) find the diametral pair
+    # if len(main_juncs) >= 2:
+    #     best_pair = None
+    #     max_d = 0.0
+    #     for i in main_juncs:
+    #         x1, y1 = index_to_coord[i]
+    #         for j in main_juncs:
+    #             if j <= i:
+    #                 continue
+    #             x2, y2 = index_to_coord[j]
+    #             d = np.hypot(x1 - x2, y1 - y2)
+    #             if d > max_d:
+    #                 max_d = d
+    #                 best_pair = (i, j)
+    #     # 4) insert pump
+    #     if best_pair is not None:
+    #         pp.create_pump(
+    #             net,
+    #             from_junction=best_pair[0],
+    #             to_junction=best_pair[1],
+    #             std_type="P3"
+    #         )
 
+    for leak in city_data.get("leaks", []):
+        lx, ly = leak["leak_junction"]
+        # create (or reuse) a junction at the leak point
+        if (lx, ly) not in junction_coords:
+            new_j_idx = len(junction_list)
+            junction_coords[(lx, ly)] = new_j_idx
+            junction_list.append((lx, ly))
+            avg_j = avg_junction_heights.get((lx, ly), 0.0)
+            pp.create_junction(
+                net,
+                index=new_j_idx,
+                pn_bar=1.0,
+                tfluid_k=293.15,
+                height_m=avg_j,
+                name=f"Leak Junction {(lx, ly)}",
+                geodata={"x": lx, "y": ly}
+            )
+        else:
+            new_j_idx = junction_coords[(lx, ly)]
+
+        # add a sink to model the leak
+        leak_rate = leak.get("rate_kg_per_s", 10.0)
+        pp.create_sink(
+            net,
+            junction=new_j_idx,
+            mdot_kg_per_s=leak_rate,
+            name=f"Leak Sink on road {leak['original_road_id']}",
+            index=10000 + leak["original_road_id"]
+        )
 
     sink_info = []
     ext_grid_junction_index = net.ext_grid["junction"].iloc[0]
@@ -238,14 +316,16 @@ def simulate_water_network(city_data):
         dynamic_profiles.append(final_profile)
 
     dynamic_profiles_array = np.array(dynamic_profiles).T
-    sink_indices = net.sink.index.values.astype(str)
+    # only the dynamically‐profiled sinks (i.e. the building sinks), not any leak sinks
+    sink_indices = [str(sink_id) for sink_id, _, _ in sink_info]
+    building_sink_indices = [int(i) for i in sink_indices]
     profiles_df_dyn = pd.DataFrame(data=dynamic_profiles_array, index=range(96), columns=sink_indices)
     ds_dyn = DFData(profiles_df_dyn)
     control.ConstControl(
         net,
         element='sink',
         variable='mdot_kg_per_s',
-        element_index=net.sink.index.values,
+        element_index=building_sink_indices,
         data_source=ds_dyn,
         profile_name=sink_indices
     )
@@ -253,8 +333,10 @@ def simulate_water_network(city_data):
     ow_dyn = OutputWriter(net, time_steps=range(96), output_path=None, log_variables=[
         ('res_junction', 'p_bar'),
         ('res_pipe', 'v_mean_m_per_s'),
+        ('res_pipe', 'mdot_from_kg_per_s'),
         ('res_sink', 'mdot_kg_per_s'),
         ('res_ext_grid', 'mdot_kg_per_s')
+        #('res_source', 'mdot_kg_per_s')
     ])
 
     run_timeseries(net, range(96), iter=200)
@@ -277,8 +359,6 @@ def simulate_water_network(city_data):
             "length_m": float(row["length_km"] * 1e3),
             "diameter_m": float(row["diameter_m"]),
             "k_mm": float(row["k_mm"]),
-            # you could also add any of these if you like:
-            "max_velocity_m_per_s": float(row["diameter_m"]),
         }
 
     # build a lookup for junction geodata
@@ -305,6 +385,19 @@ def simulate_water_network(city_data):
                 "to_coord": geo[pj2],
             })
 
+    # ── Compute pipe flows as the average of from- and to-mass-flows ──
+    # Build DataFrames for the two logged variables
+    flow_from_df = pd.DataFrame(
+        ow_dyn.np_results["res_pipe.mdot_from_kg_per_s"],
+        columns=[f"pipe_{i}" for i in net.pipe.index]
+    )
+    # average them
+    avg_flow_df = flow_from_df.abs()
+
+    print(avg_flow_df)
+    # collect into the same “collect_results” format, with prefix “flow”
+    pipe_flows = collect_results(avg_flow_df, "flow")
+
 
     return {
         "timestamps": timestamps,
@@ -314,8 +407,7 @@ def simulate_water_network(city_data):
             ow_dyn.np_results["res_sink.mdot_kg_per_s"], columns=[f"sink_{i}" for i in net.sink.index]), "mdot"),
         "pipe_velocities": collect_results(pd.DataFrame(
             ow_dyn.np_results["res_pipe.v_mean_m_per_s"], columns=[f"pipe_{i}" for i in net.pipe.index]), "v_mean"),
-        "external_grid_flows": collect_results(pd.DataFrame(
-            ow_dyn.np_results["res_ext_grid.mdot_kg_per_s"], columns=[f"ext_grid_{i}" for i in net.ext_grid.index]), "mdot"),
+        "pipe_flows": pipe_flows,
         "pipe_parameters": pipe_params,
         "external_grid": external_grid,
         "pumps": pumps

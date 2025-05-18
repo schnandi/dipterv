@@ -20,6 +20,7 @@ export interface SimulationControlsProps {
     setPlaying: (b: boolean) => void
     speed: number
     setSpeed: (s: number) => void
+    timestamps: string[]
 }
 
 export default function SimulationControls({
@@ -30,6 +31,7 @@ export default function SimulationControls({
     setPlaying,
     speed,
     setSpeed,
+    timestamps
 }: SimulationControlsProps) {
     // Advance frames when playing
     useEffect(() => {
@@ -45,10 +47,14 @@ export default function SimulationControls({
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'ArrowRight') setFrame(Math.min(frame + 1, maxFrame))
             if (e.key === 'ArrowLeft') setFrame(Math.max(frame - 1, 0))
+            if (e.code === 'Space') {
+                setPlaying(!isPlaying)
+                e.preventDefault()
+            }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [frame, maxFrame, setFrame])
+    }, [frame, maxFrame, setFrame, setPlaying, isPlaying])
 
     return (
         <Box
@@ -64,7 +70,7 @@ export default function SimulationControls({
             color="black"
         >
             <Text mb="2" color="black">
-                Frame {frame} / {maxFrame}
+                Frame {frame} / {maxFrame} — {timestamps[frame]}
             </Text>
 
             <Slider.Root

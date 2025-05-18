@@ -8,7 +8,10 @@ import {
     CloseButton,
     Stack,
     Text,
+    Button,
 } from '@chakra-ui/react'
+import { api } from '../../../lib/api'
+import { useParams } from 'next/navigation'
 
 /**
  * When in “edit” mode, we’ll pass in the raw geometry object:
@@ -51,6 +54,26 @@ export default function SideDrawer({
     item,
     isSim
 }: SideDrawerProps) {
+
+    const params = useParams()
+    const townId = Array.isArray(params.townId) ? params.townId[0] : params.townId!
+
+    const handleAddLeak = async () => {
+        if (!item || (item as SimulationItem).type !== 'road') return
+        const road = item as SimulationItem & { start: [number, number]; end: [number, number] }
+        const [x1, y1] = road.start
+        const [x2, y2] = road.end
+        const leakJunction: [number, number] = [(x1 + x2) / 2, (y1 + y2) / 2]
+
+        await api.post(`/towns/${townId}/roads/${road.id}/leak`, {
+            original_road_id: road.id,
+            leak_junction: leakJunction,
+            rate_kg_per_s: 0.01 // or whatever default you like
+        })
+
+        // close the drawer (and maybe refresh your simulation list)
+        onOpenChange(false)
+    }
 
     return (
         <Drawer.Root
@@ -130,6 +153,10 @@ export default function SideDrawer({
                                         {(item as SimulationItem).type === 'road' && (
                                             <>
                                                 <Text>
+                                                    <Text as="span" fontWeight="bold">Flow:</Text>{' '}
+                                                    {(item as any).flow.toFixed(6)} kg/s
+                                                </Text>
+                                                <Text>
                                                     <Text as="span" fontWeight="bold">
                                                         From Junction:
                                                     </Text>{' '}
@@ -175,12 +202,15 @@ export default function SideDrawer({
                                                         {(item as SimulationItem).max_velocity_m_per_s}
                                                     </Text>
                                                 )}
+                                                <Button mt={4} colorScheme="red" onClick={handleAddLeak}>
+                                                    Add Leak
+                                                </Button>
                                             </>
                                         )}
                                         {Object.entries(item as Record<string, any>)
                                             .filter(([k]) =>
-                                                !['type', 'id', 'timestamp', 'value',
-                                                    'from_junction', 'to_junction', 'length_m', 'diameter_m', 'k_mm'
+                                                !['type', 'id', 'time_delay', 'value', 'timestamp',
+                                                    'from_junction', 'to_junction', 'length_m', 'diameter_m', 'k_mm', 'name'
                                                 ].includes(k)
                                             )
                                             .map(([key, val]) => (

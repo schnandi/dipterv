@@ -34,11 +34,18 @@ interface TownMapSimProps {
     buildings: Building[]
     junctions: Record<string, number[]>
     pipeVelocities: Record<string, number[]>
+    pipeFlows: Record<string, number[]>
     sinkFlows: Record<string, number[]>
     frame: number
+    mapSize: [number, number]
+    heightMapResolution: [number, number]
+    heightMap: number[][]
+    heightMapBounds: [number, number, number, number]
     onSelect: (sel: { type: 'road' | 'building' | 'junction'; id: number }) => void
     externalGrid: ExternalGrid
     pumps: PumpInfo[]
+    showTerrain: boolean,
+    showFlow: boolean,
 }
 
 // hit‐testing helpers
@@ -90,7 +97,7 @@ function drawVelocityArrow(
     let ux = dx / len, uy = dy / len
     if (vel < 0) { ux = -ux; uy = -uy }
     const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2
-    const arrowLen = 10, arrowWid = 5
+    const arrowLen = 10, arrowWid = 8
     const p1: [number, number] = [midX, midY]
     const p2: [number, number] = [
         midX - ux * arrowLen - uy * arrowWid,
@@ -115,10 +122,17 @@ export default function TownMapSim({
     junctions,
     pipeVelocities,
     sinkFlows,
+    pipeFlows,
     frame,
+    mapSize,
+    heightMapResolution,
+    heightMap,
+    heightMapBounds,
     onSelect,
     externalGrid,
-    pumps
+    pumps,
+    showTerrain,
+    showFlow
 }: TownMapSimProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const offset = useRef({ x: 0, y: 0 })
@@ -143,8 +157,71 @@ export default function TownMapSim({
     }, [roads])
 
     useEffect(() => {
+        const [minX, minY, maxX, maxY] = heightMapBounds
+        const widthWorld = maxX - minX
+        const heightWorld = maxY - minY
         const canvas = canvasRef.current!
         const ctx = canvas.getContext('2d')!
+
+        // 1) Build offscreen buffer from heightMap
+        const [resX, resY] = heightMapResolution
+        const buffer = document.createElement('canvas')
+        buffer.width = resX
+        buffer.height = resY
+        const bufCtx = buffer.getContext('2d')!
+
+        // Create ImageData
+        const img = bufCtx.createImageData(resX, resY)
+        const data = img.data
+
+        // Find max height for normalization
+        const flat = heightMap.flat()
+        const maxH = Math.max(...flat)
+
+        const dirt = [139, 69, 19]   // deep brown
+        const grass = [34, 139, 34]   // green
+        const rock = [128, 128, 128]   // gray-brown rock
+        const snow = [245, 245, 245]   // pale snow
+
+        // define our normalized thresholds (on the gamma-corrected height)
+        const t1 = 0.3   // up to 30%  → dirt→grass
+        const t2 = 0.6   // 30–60%      → grass→rock
+        const t3 = 0.9   // 60–90%      → rock→snow
+        // 90–100%        → pure snow
+
+        for (let y = 0; y < resY; y++) {
+            for (let x = 0; x < resX; x++) {
+                const h = heightMap[y][x] / maxH      // raw [0..1]
+                const h2 = Math.pow(h, 1.2)            // gamma-corrected
+
+                let c1: number[], c2: number[], t: number
+
+                if (h2 < t1) {
+                    // dirt → grass
+                    c1 = dirt; c2 = grass; t = h2 / t1
+                }
+                else if (h2 < t2) {
+                    // grass → rock
+                    c1 = grass; c2 = rock; t = (h2 - t1) / (t2 - t1)
+                }
+                else if (h2 < t3) {
+                    // rock → snow
+                    c1 = rock; c2 = snow; t = (h2 - t2) / (t3 - t2)
+                }
+                else {
+                    // solid snow
+                    c1 = snow; c2 = snow; t = 0
+                }
+
+                const idx = (y * resX + x) * 4
+                data[idx + 0] = Math.round(c1[0] + (c2[0] - c1[0]) * t)
+                data[idx + 1] = Math.round(c1[1] + (c2[1] - c1[1]) * t)
+                data[idx + 2] = Math.round(c1[2] + (c2[2] - c1[2]) * t)
+                data[idx + 3] = 255
+            }
+        }
+
+        bufCtx.putImageData(img, 0, 0)
 
         function draw() {
             const { width, height } = canvas
@@ -156,6 +233,14 @@ export default function TownMapSim({
             ctx.translate(offset.current.x, offset.current.y)
             ctx.scale(scale.current, scale.current)
             ctx.translate(0, height); ctx.scale(1, -1)
+
+            if (showTerrain) {
+                ctx.drawImage(
+                    buffer,
+                  /* dx */ minX, /* dy */ minY,
+                  /* dWidth */ widthWorld, /* dHeight */ heightWorld
+                )
+            }
 
             // split buildings by district
             const resBuildings = buildings.filter(b => b.district === 'residential');
@@ -183,39 +268,72 @@ export default function TownMapSim({
             const pMin = Math.min(...pres), pMax = Math.max(...pres)
             const noPresData = pMin === pMax
 
-            const vels = roads.map(r =>
-                Math.abs(pipeVelocities[`v_mean_pipe_${r.id}`]?.[frame] ?? 0)
-            )
-            const vMin = Math.min(...vels), vMax = Math.max(...vels)
-            const noVelData = vMin === vMax
+            const velGroups: Record<string, number[]> = {
+                main: [],
+                side: [],
+                'building connection': []
+            };
+
+            roads.forEach(r => {
+                const arr = pipeVelocities[`v_mean_pipe_${r.id}`] || [];
+                arr.forEach(v => {
+                    velGroups[r.pipe_type ?? 'side'].push(Math.abs(v));
+                });
+            });
+
+            const vMinGroup: Record<string, number> = {};
+            const vMaxGroup: Record<string, number> = {};
+            Object.entries(velGroups).forEach(([type, vals]) => {
+                vMinGroup[type] = vals.length ? Math.min(...vals) : 0;
+                vMaxGroup[type] = vals.length ? Math.max(...vals) : 1;
+            });
+
+
+            const allFlows = roads.flatMap(r =>
+                (pipeFlows[`flow_pipe_${r.id}`] || []).map(f => Math.abs(f))
+            );
+            const fMin = allFlows.length ? Math.min(...allFlows) : 0;
+            const fMax = allFlows.length ? Math.max(...allFlows) : 1;
+
+
 
 
 
             // draw pipes
             roads.forEach(r => {
-                const vel = (pipeVelocities[`v_mean_pipe_${r.id}`] || [0])[frame]
-                const color = noVelData
-                    ? '#666'
-                    : mapColor(Math.abs(vel), vMin, vMax)
+                const type = r.pipe_type ?? "side";
+                const vel = (pipeVelocities[`v_mean_pipe_${r.id}`] || [0])[frame];
+                let color: string;
 
-
-                ctx.strokeStyle = color
-                ctx.lineWidth = r.pipe_type === 'main' ? 3 : 2
-                ctx.beginPath()
-                ctx.moveTo(r.start[0], r.start[1])
-                ctx.lineTo(r.end[0], r.end[1])
-                ctx.stroke()
-
-                if (!noVelData) {
-                    drawVelocityArrow(
-                        ctx,
-                        r.start[0], r.start[1],
-                        r.end[0], r.end[1],
-                        vel,
-                        color
-                    )
+                if (showFlow) {
+                    const flow = (pipeFlows[`flow_pipe_${r.id}`] || [0])[frame];
+                    color = fMin === fMax
+                        ? "#666"
+                        : mapColor(Math.abs(flow), fMin, fMax);
+                } else {
+                    // colour by abs(velocity)
+                    const vmin = vMinGroup[type], vmax = vMaxGroup[type];
+                    color = (vmin === vmax)
+                        ? "#666"
+                        : mapColor(Math.abs(vel), vmin, vmax);
                 }
-            })
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = type === "main" ? 5 : type === "side" ? 2 : 1;
+                ctx.beginPath();
+                ctx.moveTo(r.start[0], r.start[1]);
+                ctx.lineTo(r.end[0], r.end[1]);
+                ctx.stroke();
+
+                // always draw arrow from signed velocity
+                drawVelocityArrow(
+                    ctx,
+                    r.start[0], r.start[1],
+                    r.end[0], r.end[1],
+                    vel,
+                    color
+                );
+            });
 
             //highlight pump locations
             pumps.forEach((p) => {
@@ -277,6 +395,10 @@ export default function TownMapSim({
                 );
                 ctx.closePath();
                 ctx.fill();
+
+                ctx.lineWidth = 2
+                ctx.strokeStyle = isRes ? '#00A5E3' /*blue*/ : '#FF60A8' /*orange*/
+                ctx.stroke()
             });
         }
 
@@ -318,7 +440,7 @@ export default function TownMapSim({
             window.removeEventListener('mouseup', onMouseUp)
             canvas.removeEventListener('wheel', onWheel)
         }
-    }, [roads, buildings, junctions, pipeVelocities, sinkFlows, frame, externalGrid, pumps])
+    }, [roads, buildings, junctions, pipeVelocities, sinkFlows, pipeFlows, frame, externalGrid, pumps, heightMap, heightMapResolution, mapSize, heightMapBounds, showTerrain, showFlow])
 
     return (
         <Box w="100%" h="100%" position="absolute">

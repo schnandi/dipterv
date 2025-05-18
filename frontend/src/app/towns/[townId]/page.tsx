@@ -15,6 +15,8 @@ import {
     Text,
     HStack,
     IconButton,
+    Switch,
+    VStack,
 } from '@chakra-ui/react'
 import { LuArrowLeft } from 'react-icons/lu'
 import { api } from '../../../lib/api'
@@ -30,12 +32,17 @@ const SideDrawer = dynamic(
 
 interface TownData {
     name: string
+    seed: number
     data: {
+        map_size: [number, number]
+        height_map_resolution: [number, number]
+        height_map: number[][]
+        height_map_bounds: [number, number, number, number]
         roads: any[]
         buildings: any[]
     }
-    seed: number
 }
+
 
 interface SimulationSummary {
     id: number
@@ -61,6 +68,7 @@ interface SimulationFull extends SimulationSummary {
         timestamps: string[]
         junction_pressures: Record<string, number[]>
         pipe_velocities: Record<string, number[]>
+        pipe_flows: Record<string, number[]>
         sink_flows: Record<string, number[]>
         pipe_parameters: Record<string, {
             name: string
@@ -88,6 +96,9 @@ export default function TownDetailPage() {
     const [speed, setSpeed] = useState(1)
     const [selected, setSelected] = useState<{ type: 'road' | 'building' | 'junction'; id: number } | null>(null)
     const [viewMode, setViewMode] = useState<'edit' | 'simulate'>('edit')
+    const [isRegenerating, setRegenerating] = useState(false);
+    const [showTerrain, setShowTerrain] = useState(true)
+    const [showFlow, setShowFlow] = useState(false)
 
     // fetch town geometry
     const { data: townData, error, isLoading } = useSWR<TownData>(
@@ -111,12 +122,14 @@ export default function TownDetailPage() {
     // create simulation helper
     const { mutate } = useSWRConfig()
     const createSim = async () => {
-        await api.post('/simulations', {
+        setRegenerating(true);
+        await api.post('/simulations/', {
             title: `Sim for town ${townId}`,
             town_id: Number(townId),
-        })
-        mutate(`/simulations/town/${townId}`)
-    }
+        });
+        mutate(`/simulations/town/${townId}`);
+        setRegenerating(false);
+    };
 
     if (isLoading) return <Spinner />
     if (error) return <Text color="red.500">Failed to load town.</Text>
@@ -132,12 +145,14 @@ export default function TownDetailPage() {
                 val = simDetail.details.pipe_velocities[`v_mean_pipe_${selected.id}`][frame]
                 // grab the static pipe info and merge it in:
                 const staticInfo = simDetail.details.pipe_parameters[selected.id] || {}
+                const flow = simDetail.details.pipe_flows[`flow_pipe_${selected.id}`][frame];
                 const geo = townData!.data.roads.find(r => r.id === selected.id) || {}
                 drawerItem = {
                     type: 'road',
                     id: selected.id,
                     timestamp: ts,
                     value: val,
+                    flow: flow,
                     ...staticInfo,
                     ...geo
                 }
@@ -185,12 +200,15 @@ export default function TownDetailPage() {
                     {townData?.seed && `${townData.name} (seed ${townData.seed})`}
                 </Heading>
 
-                {simsLoading ? (
+                {simsLoading || isRegenerating ? (
                     <Spinner size="sm" marginEnd="auto" />
                 ) : sim ? (
                     <HStack marginEnd="auto">
                         <Box w={2} h={2} bg="green.500" borderRadius="full" />
                         <Text>Simulation is ready</Text>
+                        <Button size="sm" colorScheme="yellow" onClick={createSim}>
+                            Regenerate
+                        </Button>
                     </HStack>
                 ) : (
                     <Button colorScheme="green" onClick={createSim} marginEnd="auto">
@@ -215,12 +233,55 @@ export default function TownDetailPage() {
             </Flex>
 
             <Box flex="1" position="relative">
+                <Box
+                    position="absolute"
+                    top="4"
+                    left="4"
+                    bg="gray.100"
+                    p="3"
+                    borderRadius="md"
+                    boxShadow="md"
+                    zIndex="1"
+                >
+                    <VStack align="stretch">
+                        <HStack justify="space-between">
+                            <Switch.Root
+                                size="sm"
+                                checked={showTerrain}
+                                colorPalette="teal"
+                                onCheckedChange={checked => setShowTerrain(checked.checked)}
+                            >
+                                <Switch.HiddenInput />
+                                <Switch.Control />
+                                <Switch.Label color="black">Show Terrain</Switch.Label>
+                            </Switch.Root>
+                        </HStack>
+                        <HStack justify="space-between">
+                            <Switch.Root
+                                size="sm"
+                                checked={showFlow}
+                                colorPalette="teal"
+                                onCheckedChange={checked => setShowFlow(checked.checked)}
+                            >
+                                <Switch.HiddenInput />
+                                <Switch.Control />
+                                <Switch.Label color="black">Show Pipe Flow</Switch.Label>
+                            </Switch.Root>
+                        </HStack>
+                    </VStack>
+                </Box>
+
                 {viewMode === 'edit' ? (
                     <TownMap
                         roads={townData!.data.roads}
                         buildings={townData!.data.buildings}
                         junctions={{}}
                         frame={frame}
+                        mapSize={townData!.data.map_size}
+                        heightMapResolution={townData!.data.height_map_resolution}
+                        heightMap={townData!.data.height_map}
+                        heightMapBounds={townData!.data.height_map_bounds}
+                        showTerrain={showTerrain}
                         onSelect={setSelected}
                     />
                 ) : simDetailLoading ? (
@@ -233,11 +294,18 @@ export default function TownDetailPage() {
                         buildings={townData!.data.buildings}
                         junctions={simDetail.details.junction_pressures}
                         pipeVelocities={simDetail.details.pipe_velocities}
+                        pipeFlows={simDetail.details.pipe_flows}
                         sinkFlows={simDetail.details.sink_flows}
                         frame={frame}
+                        mapSize={townData!.data.map_size}
+                        heightMapResolution={townData!.data.height_map_resolution}
+                        heightMap={townData!.data.height_map}
+                        heightMapBounds={townData!.data.height_map_bounds}
                         onSelect={setSelected}
                         externalGrid={simDetail.details.external_grid}
                         pumps={simDetail.details.pumps}
+                        showTerrain={showTerrain}
+                        showFlow={showFlow}
                     />
                 ) : null}
 
@@ -250,6 +318,7 @@ export default function TownDetailPage() {
                         setPlaying={setPlaying}
                         speed={speed}
                         setSpeed={setSpeed}
+                        timestamps={simDetail.details.timestamps}
                     />
                 )}
             </Box>

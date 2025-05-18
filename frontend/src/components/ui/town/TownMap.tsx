@@ -21,6 +21,11 @@ interface TownMapEditProps {
     buildings: Building[]
     junctions: Record<string, number[]>
     frame: number
+    mapSize: [number, number]
+    heightMapResolution: [number, number]
+    heightMap: number[][],
+    heightMapBounds: [number, number, number, number],
+    showTerrain: boolean,
     onSelect: (sel: { type: 'road' | 'building' | 'junction'; id: number }) => void
 }
 
@@ -56,7 +61,12 @@ export default function TownMapEdit({
     buildings,
     junctions,
     frame,
+    mapSize,
+    heightMapResolution,
+    heightMap,
+    heightMapBounds,
     onSelect,
+    showTerrain,
 }: TownMapEditProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const offset = useRef({ x: 0, y: 0 })
@@ -81,11 +91,78 @@ export default function TownMapEdit({
     }, [roads])
 
     useEffect(() => {
+        const [minX, minY, maxX, maxY] = heightMapBounds
+        const widthWorld = maxX - minX
+        const heightWorld = maxY - minY
         const canvas = canvasRef.current!
         const ctx = canvas.getContext('2d')!
 
+        // 1) Build offscreen buffer from heightMap
+        const [resX, resY] = heightMapResolution
+        const buffer = document.createElement('canvas')
+        buffer.width = resX
+        buffer.height = resY
+        const bufCtx = buffer.getContext('2d')!
+
+        // Create ImageData
+        const img = bufCtx.createImageData(resX, resY)
+        const data = img.data
+
+        // Find max height for normalization
+        const flat = heightMap.flat()
+        const maxH = Math.max(...flat)
+
+        const dirt = [139, 69, 19]   // deep brown
+        const grass = [34, 139, 34]   // green
+        const rock = [128, 128, 128]   // gray-brown rock
+        const snow = [245, 245, 245]   // pale snow
+
+        // define our normalized thresholds (on the gamma-corrected height)
+        const t1 = 0.3   // up to 30%  → dirt→grass
+        const t2 = 0.6   // 30–60%      → grass→rock
+        const t3 = 0.9   // 60–90%      → rock→snow
+        // 90–100%        → pure snow
+
+        for (let y = 0; y < resY; y++) {
+            for (let x = 0; x < resX; x++) {
+                const h = heightMap[y][x] / maxH      // raw [0..1]
+                const h2 = Math.pow(h, 1.2)            // gamma-corrected
+
+                let c1: number[], c2: number[], t: number
+
+                if (h2 < t1) {
+                    // dirt → grass
+                    c1 = dirt; c2 = grass; t = h2 / t1
+                }
+                else if (h2 < t2) {
+                    // grass → rock
+                    c1 = grass; c2 = rock; t = (h2 - t1) / (t2 - t1)
+                }
+                else if (h2 < t3) {
+                    // rock → snow
+                    c1 = rock; c2 = snow; t = (h2 - t2) / (t3 - t2)
+                }
+                else {
+                    // solid snow
+                    c1 = snow; c2 = snow; t = 0
+                }
+
+                const idx = (y * resX + x) * 4
+                data[idx + 0] = Math.round(c1[0] + (c2[0] - c1[0]) * t)
+                data[idx + 1] = Math.round(c1[1] + (c2[1] - c1[1]) * t)
+                data[idx + 2] = Math.round(c1[2] + (c2[2] - c1[2]) * t)
+                data[idx + 3] = 255
+            }
+        }
+
+        bufCtx.putImageData(img, 0, 0)
+
+        // 2) The main draw loop
         function draw() {
             const { width, height } = canvas
+
+
+            // reset
             ctx.resetTransform()
             ctx.clearRect(0, 0, width, height)
             ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height)
@@ -93,8 +170,18 @@ export default function TownMapEdit({
             // pan & zoom
             ctx.translate(offset.current.x, offset.current.y)
             ctx.scale(scale.current, scale.current)
-            ctx.translate(0, height); ctx.scale(1, -1)
+            ctx.translate(0, height)
+            ctx.scale(1, -1)
 
+            if (showTerrain) {
+                ctx.drawImage(
+                    buffer,
+                  /* dx */ minX, /* dy */ minY,
+                  /* dWidth */ widthWorld, /* dHeight */ heightWorld
+                )
+            }
+
+            // draw full-bleed terrain
             // pipes (plain)
             roads.forEach(r => {
                 ctx.strokeStyle = r.pipe_type === 'main' ? '#000' : '#666'
@@ -170,7 +257,7 @@ export default function TownMapEdit({
             window.removeEventListener('mouseup', onMouseUp)
             canvas.removeEventListener('wheel', onWheel)
         }
-    }, [roads, buildings, junctions, frame])
+    }, [roads, buildings, junctions, frame, heightMap, heightMapResolution, mapSize, heightMapBounds, showTerrain])
 
     return (
         <Box w="100%" h="100%" position="absolute">
