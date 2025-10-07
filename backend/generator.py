@@ -1,7 +1,7 @@
 import numpy as np
 import heapq  # Priority queue for procedural generation
 from shapely.geometry import LineString, Point, Polygon
-from noise import pnoise2
+from perlin_noise import PerlinNoise
 import math
 import random  # for generating a random seed if none provided
 
@@ -94,19 +94,17 @@ class CityGenerator:
         self.buildings = []
         self.priority_queue = []
         self.intersection_count = {}  # Track how many roads connect at each coordinate
+        self.height_noise = PerlinNoise(octaves=CONFIG["height_octaves"], seed=seed)
 
     def _get_terrain_height(self, x, y):
         """
-        Compute height via fractal Brownian motion (fBm) to avoid striping.
+        Compute height via PerlinNoise (replacement for pnoise2).
         """
-        noise_val = pnoise2(
+        noise_val = self.height_noise([
             x / CONFIG["height_noise_scale"],
-            y / CONFIG["height_noise_scale"],
-            octaves=CONFIG["height_octaves"],
-            persistence=CONFIG["height_persistence"],
-            lacunarity=CONFIG["height_lacunarity"],
-            base=self.seed
-        )
+            y / CONFIG["height_noise_scale"]
+        ])
+
         # normalize to [0,1]
         h = (noise_val + 1) * 0.5
 
