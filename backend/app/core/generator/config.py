@@ -1,0 +1,21 @@
+CONFIG = {
+    "num_highways": 5,
+    "highway_min_length": 150,
+    "highway_max_length": 350,
+    "side_road_min_length": 100,
+    "side_road_max_length": 150,
+    "highway_branch_angle_range": (-30, 30),
+    "side_road_branch_variation": (-5, 5),
+    "branch_probability": 0.7,
+    "max_iterations": 200,
+    "intersection_snap_distance": 100,
+    "highway_snap_distance": 1,
+    "height_noise_scale": 1000,
+    "height_octaves": 6,
+    "height_persistence": 0.5,
+    "height_lacunarity": 2.0,
+    "height_amplitude": 100,
+    "min_intersection_separation": 5.0,
+    "height_curve_exponent": 1.5,
+    "height_map_resolution": (256, 256)
+}

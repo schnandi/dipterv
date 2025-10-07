@@ -6,10 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app import db
 from app.models import Town
 import random
-
-# Import your CityGenerator from your generator.py file
-# (Assuming you've modified generator.py so that the CityGenerator.generate method returns a dict.)
-from generator import CityGenerator
+from app.core.generator.city_generator import CityGenerator
 
 ns = Namespace('towns', description='Town related operations')
 

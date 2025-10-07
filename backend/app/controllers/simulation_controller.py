@@ -3,7 +3,7 @@ from flask_restx import Namespace, Resource, fields
 from flask import request
 from app import db
 from app.models import Simulation, Town
-from simulation import simulate_water_network
+from app.core.simulation.runner import run_simulation
 
 ns = Namespace('simulations', description='Simulation (time series) operations')
 
@@ -51,7 +51,7 @@ class SimulationList(Resource):
         db.session.flush()
 
         try:
-            result = simulate_water_network(town.data)
+            result = run_simulation(town.data)
         except Exception as e:
             ns.abort(500, f"Simulation failed: {str(e)}")
 
