@@ -22,6 +22,7 @@ import { LuArrowLeft } from 'react-icons/lu'
 import { api } from '../../../lib/api'
 import TownMap from '../../../components/ui/town/TownMap'
 import TownMapSim from '../../../components/ui/town/TownMapSim'
+import TownCanvas from '@/components/ui/town-map/TownCanvas'
 import SimulationControls from '../../../components/ui/town/SimulationControls'
 
 // dynamically import drawer so it never SSR’s
@@ -97,27 +98,25 @@ export default function TownDetailPage() {
     const [selected, setSelected] = useState<{ type: 'road' | 'building' | 'junction'; id: number } | null>(null)
     const [viewMode, setViewMode] = useState<'edit' | 'simulate'>('edit')
     const [isRegenerating, setRegenerating] = useState(false);
-    const [showTerrain, setShowTerrain] = useState(true)
+    const [showTerrain, setShowTerrain] = useState(false)
     const [showFlow, setShowFlow] = useState(false)
 
     // fetch town geometry
     const { data: townData, error, isLoading } = useSWR<TownData>(
-        `/towns/${townId}`, url => api.get(url).then(r => r.data)
+        `/towns/${townId}`, (url: string) => api.get(url).then(r => r.data)
     )
 
     // fetch simulation summaries
     const { data: sims, isLoading: simsLoading } = useSWR<SimulationSummary[]>(
-        `/simulations/town/${townId}`, url => api.get(url).then(r => r.data)
+        `/simulations/town/${townId}`, (url: string) => api.get(url).then(r => r.data)
     )
     const sim = sims?.[0] ?? null
 
     // fetch full simulation details
     const { data: simDetail, isLoading: simDetailLoading } = useSWR<SimulationFull>(
         sim ? `/simulations/${sim.id}` : null,
-        url => api.get(url).then(r => r.data)
+        (url: string) => api.get(url).then(r => r.data)
     )
-
-    console.log(simDetail)
 
     // create simulation helper
     const { mutate } = useSWRConfig()
@@ -179,7 +178,7 @@ export default function TownDetailPage() {
             // edit-mode: show raw geometry object
             if (selected.type === 'road') {
                 drawerItem = townData!.data.roads.find(r => r.id === selected.id)
-            } else {
+            } else if (selected.type === 'building') {
                 drawerItem = townData!.data.buildings.find(b => b.id === selected.id)
             }
         }
@@ -236,7 +235,7 @@ export default function TownDetailPage() {
                 <Box
                     position="absolute"
                     top="4"
-                    left="4"
+                    left="5"
                     bg="gray.100"
                     p="3"
                     borderRadius="md"
@@ -271,45 +270,40 @@ export default function TownDetailPage() {
                     </VStack>
                 </Box>
 
-                {viewMode === 'edit' ? (
-                    <TownMap
-                        roads={townData!.data.roads}
-                        buildings={townData!.data.buildings}
-                        junctions={{}}
-                        frame={frame}
-                        mapSize={townData!.data.map_size}
-                        heightMapResolution={townData!.data.height_map_resolution}
-                        heightMap={townData!.data.height_map}
-                        heightMapBounds={townData!.data.height_map_bounds}
-                        showTerrain={showTerrain}
-                        onSelect={setSelected}
-                    />
-                ) : simDetailLoading ? (
+                {simDetailLoading ? (
                     <Flex h="100%" align="center" justify="center">
                         <Spinner size="xl" />
                     </Flex>
-                ) : simDetail ? (
-                    <TownMapSim
+                ) : (
+                    <TownCanvas
+                        mode={viewMode}
                         roads={townData!.data.roads}
                         buildings={townData!.data.buildings}
-                        junctions={simDetail.details.junction_pressures}
-                        pipeVelocities={simDetail.details.pipe_velocities}
-                        pipeFlows={simDetail.details.pipe_flows}
-                        sinkFlows={simDetail.details.sink_flows}
+                        junctions={simDetail?.details.junction_pressures || {}}
+                        pipeVelocities={simDetail?.details.pipe_velocities}
+                        pipeFlows={simDetail?.details.pipe_flows}
+                        sinkFlows={simDetail?.details.sink_flows}
                         frame={frame}
                         mapSize={townData!.data.map_size}
-                        heightMapResolution={townData!.data.height_map_resolution}
                         heightMap={townData!.data.height_map}
                         heightMapBounds={townData!.data.height_map_bounds}
-                        onSelect={setSelected}
-                        externalGrid={simDetail.details.external_grid}
-                        pumps={simDetail.details.pumps}
+                        externalGrid={simDetail?.details.external_grid}
+                        pumps={simDetail?.details.pumps}
                         showTerrain={showTerrain}
                         showFlow={showFlow}
+                        onSelect={setSelected}
+                        selected={selected}
                     />
-                ) : null}
-
-                {viewMode === 'simulate' && simDetail && (
+                )}
+            </Box>
+            {viewMode === 'simulate' && simDetail && (
+                <Box
+                    position="fixed"
+                    bottom="16px"
+                    left="50%"
+                    transform="translateX(-50%)"
+                    zIndex={20}
+                >
                     <SimulationControls
                         frame={frame}
                         setFrame={setFrame}
@@ -320,8 +314,8 @@ export default function TownDetailPage() {
                         setSpeed={setSpeed}
                         timestamps={simDetail.details.timestamps}
                     />
-                )}
-            </Box>
+                </Box>
+            )}
 
             <SideDrawer
                 open={!!selected}
