@@ -3,15 +3,13 @@ import { Box, VStack, Input, Text, NativeSelect } from '@chakra-ui/react'
 
 interface Props {
     size: number
-    rotation: number
-    district: string
-    onChange: (values: { size?: number; rotation?: number; district?: string }) => void
+    buildingType: string
+    onChange: (values: { size?: number; rotation?: number; buildingType?: string }) => void
 }
 
 export default function BuildingSettingsPanel({
     size,
-    rotation,
-    district,
+    buildingType,
     onChange,
 }: Props) {
     return (
@@ -24,7 +22,7 @@ export default function BuildingSettingsPanel({
             borderRadius="md"
             shadow="md"
             zIndex={30}
-            w="220px"
+            w="240px"
         >
             <VStack align="stretch" gap={3}>
                 <Text fontWeight="bold" fontSize="sm">
@@ -37,28 +35,23 @@ export default function BuildingSettingsPanel({
                 />
 
                 <Text fontWeight="bold" fontSize="sm">
-                    Rotation (°)
-                </Text>
-                <Input
-                    type="number"
-                    value={rotation}
-                    onChange={(e) => onChange({ rotation: parseFloat(e.target.value) })}
-                />
-
-                <Text fontWeight="bold" fontSize="sm">
-                    District
+                    Building Type
                 </Text>
                 <NativeSelect.Root size="sm">
                     <NativeSelect.Field
-                        value={district}
-                        onChange={(e) => onChange({ district: e.target.value })}
+                        value={buildingType}
+                        onChange={(e) => onChange({ buildingType: e.target.value })}
                     >
-                        <option value="residential">Residential</option>
-                        <option value="industrial">Industrial</option>
+                        <option value="single_family">Single Family</option>
+                        <option value="apartment">Apartment</option>
+                        <option value="restaurant">Restaurant</option>
+                        <option value="office">Office</option>
+                        <option value="factory">Factory</option>
+                        <option value="warehouse">Warehouse</option>
+                        <option value="processing_plant">Processing Plant</option>
                     </NativeSelect.Field>
                     <NativeSelect.Indicator />
                 </NativeSelect.Root>
-
             </VStack>
         </Box>
     )

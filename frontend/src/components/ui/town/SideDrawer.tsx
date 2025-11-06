@@ -8,11 +8,12 @@ import {
     Text,
     Button,
     CloseButton,
+    NativeSelect,
+    Input,
 } from '@chakra-ui/react'
 import { api } from '../../../lib/api'
 import { useParams } from 'next/navigation'
-
-type GeometryItem = Record<string, any>
+import { Building, Road } from '../town-map/TownCanvas'
 
 interface SimulationItem {
     type: 'road' | 'building' | 'junction'
@@ -27,20 +28,20 @@ interface SimulationItem {
     k_mm?: number
     material?: string | null
     max_velocity_m_per_s?: number | null
-
-    // extra building props that may exist in the geometry merge
     district?: string
     building_type?: string
     terrain_height?: number
 }
 
-type Item = SimulationItem | GeometryItem | null
+type Item = SimulationItem | Building | Road | null
 
 interface SideDrawerProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     item: Item
     isSim: boolean
+    onUpdateBuilding?: (id: number, values: Partial<Building>) => void
+    onUpdatePipe?: (id: number, values: Partial<Road>) => void
 }
 
 /**
@@ -51,6 +52,8 @@ export default function SideDrawer({
     onOpenChange,
     item,
     isSim,
+    onUpdateBuilding,
+    onUpdatePipe,
 }: SideDrawerProps) {
     const params = useParams()
     const townId = Array.isArray(params.townId) ? params.townId[0] : params.townId!
@@ -73,10 +76,11 @@ export default function SideDrawer({
 
     if (!open || !item) return null
 
-    const simItem = item as SimulationItem
-    const isRoad = simItem.type === 'road'
-    const isBuilding = simItem.type === 'building'
-    const isJunction = simItem.type === 'junction'
+    const isSimItem = (obj: any): obj is SimulationItem => 'timestamp' in obj
+    const isBuilding = (obj: any): obj is Building => 'corners' in obj
+    const isRoad = (obj: any): obj is Road => 'start' in obj && 'end' in obj
+    const isJunction = (obj: any): obj is { id: number; coord: [number, number] } =>
+        'coord' in obj && !('start' in obj)
 
     return (
         <Box
@@ -98,11 +102,13 @@ export default function SideDrawer({
             <HStack justify="space-between" align="center" mb="2">
                 <Text fontWeight="bold" fontSize="lg" color="gray.800">
                     {isSim
-                        ? isRoad
-                            ? `Pipe ${simItem.id}`
-                            : isBuilding
-                                ? `Building ${simItem.id}`
-                                : `Junction ${simItem.id}`
+                        ? isSimItem(item)
+                            ? item.type === 'road'
+                                ? `Pipe ${item.id}`
+                                : item.type === 'building'
+                                    ? `Building ${item.id}`
+                                    : `Junction ${item.id}`
+                            : 'Details'
                         : 'Details'}
                 </Text>
                 <CloseButton onClick={() => onOpenChange(false)} size="sm" />
@@ -111,62 +117,58 @@ export default function SideDrawer({
             <Box height="1px" bg="gray.300" my="3" />
 
             <VStack align="stretch" gap="2" fontSize="sm" color="gray.800">
-                {isSim ? (
+                {isSim && isSimItem(item) ? (
                     <>
                         {/* ⏱ Timestamp and main metric */}
-                        <Text><b>Time:</b> {simItem.timestamp}</Text>
+                        <Text>
+                            <b>Time:</b> {item.timestamp}
+                        </Text>
                         <Text>
                             <b>
-                                {isRoad
+                                {item.type === 'road'
                                     ? 'Velocity'
-                                    : isBuilding
+                                    : item.type === 'building'
                                         ? 'Flow'
                                         : 'Pressure'}
                                 :
                             </b>{' '}
-                            {simItem.value.toFixed(6)}{' '}
-                            {isJunction ? 'bar' : isBuilding ? 'kg/s' : 'm/s'}
+                            {item.value.toFixed(6)}{' '}
+                            {item.type === 'junction'
+                                ? 'bar'
+                                : item.type === 'building'
+                                    ? 'kg/s'
+                                    : 'm/s'}
                         </Text>
 
                         {/* 💧 Building extra info */}
-                        {isBuilding && (
+                        {item.type === 'building' && (
                             <>
                                 <Text>
-                                    <b>Volumetric:</b>{' '}
-                                    {(simItem.value * 3600).toFixed(2)} L/h
+                                    <b>Volumetric:</b> {(item.value * 3600).toFixed(2)} L/h
                                 </Text>
-
-                                {/* 🏘️ Include geometry metadata merged from backend */}
-                                {simItem.building_type && (
-                                    <Text><b>Type:</b> {simItem.building_type}</Text>
-                                )}
-                                {simItem.district && (
-                                    <Text><b>District:</b> {simItem.district}</Text>
-                                )}
-                                {typeof simItem.terrain_height === 'number' && (
+                                {item.building_type && <Text><b>Type:</b> {item.building_type}</Text>}
+                                {item.district && <Text><b>District:</b> {item.district}</Text>}
+                                {typeof item.terrain_height === 'number' && (
                                     <Text>
-                                        <b>Terrain Height:</b>{' '}
-                                        {simItem.terrain_height.toFixed(2)} m
+                                        <b>Terrain Height:</b> {item.terrain_height.toFixed(2)} m
                                     </Text>
                                 )}
                             </>
                         )}
 
                         {/* 🧮 Pipe extra info */}
-                        {isRoad && (
+                        {item.type === 'road' && (
                             <>
-                                <Text><b>Flow:</b> {simItem.flow?.toFixed(6)} kg/s</Text>
-                                <Text><b>From Junction:</b> {simItem.from_junction}</Text>
-                                <Text><b>To Junction:</b> {simItem.to_junction}</Text>
-                                <Text><b>Length (m):</b> {simItem.length_m?.toFixed(2)}</Text>
-                                <Text><b>Diameter (m):</b> {simItem.diameter_m}</Text>
-                                <Text><b>Roughness (k_mm):</b> {simItem.k_mm?.toFixed(6)}</Text>
-                                {simItem.material && (
-                                    <Text><b>Material:</b> {simItem.material}</Text>
-                                )}
-                                {simItem.max_velocity_m_per_s && (
+                                <Text><b>Flow:</b> {item.flow?.toFixed(6)} kg/s</Text>
+                                <Text><b>From Junction:</b> {item.from_junction}</Text>
+                                <Text><b>To Junction:</b> {item.to_junction}</Text>
+                                <Text><b>Length (m):</b> {item.length_m?.toFixed(2)}</Text>
+                                <Text><b>Diameter (m):</b> {item.diameter_m}</Text>
+                                <Text><b>Roughness (k_mm):</b> {item.k_mm?.toFixed(6)}</Text>
+                                {item.material && <Text><b>Material:</b> {item.material}</Text>}
+                                {item.max_velocity_m_per_s && (
                                     <Text>
-                                        <b>Max Velocity:</b> {simItem.max_velocity_m_per_s} m/s
+                                        <b>Max Velocity:</b> {item.max_velocity_m_per_s} m/s
                                     </Text>
                                 )}
                                 <Button
@@ -181,12 +183,85 @@ export default function SideDrawer({
                         )}
                     </>
                 ) : (
-                    /* ✏️ Edit mode */
-                    Object.entries(item as GeometryItem).map(([key, val]) => (
-                        <Text key={key}>
-                            <b>{key}:</b> {JSON.stringify(val)}
-                        </Text>
-                    ))
+                    <>
+                        {isBuilding(item) && (
+                            <>
+                                <VStack align="stretch" gap={3}>
+                                    <Text fontSize="sm">Building Type</Text>
+                                    <NativeSelect.Root size="sm">
+                                        <NativeSelect.Field
+                                            value={item.building_type ?? 'single_family'}
+                                            onChange={(e) =>
+                                                onUpdateBuilding?.(item.id, { building_type: e.target.value })
+                                            }
+                                        >
+                                            <option value="single_family">Single Family</option>
+                                            <option value="apartment">Apartment</option>
+                                            <option value="restaurant">Restaurant</option>
+                                            <option value="office">Office</option>
+                                            <option value="factory">Factory</option>
+                                            <option value="warehouse">Warehouse</option>
+                                            <option value="processing_plant">Processing Plant</option>
+                                        </NativeSelect.Field>
+                                        <NativeSelect.Indicator />
+                                    </NativeSelect.Root>
+
+                                    <Text fontSize="sm">Rotation (°)</Text>
+                                    <Input
+                                        type="number"
+                                        value={item.rotation ?? 0}
+                                        onChange={(e) =>
+                                            onUpdateBuilding?.(item.id, {
+                                                rotation: parseFloat(e.target.value),
+                                            })
+                                        }
+                                    />
+                                </VStack>
+                            </>
+                        )}
+
+                        {isRoad(item) && (
+                            <>
+                                <VStack align="stretch" gap={3}>
+                                    <Text fontSize="sm">Pipe Type</Text>
+                                    <NativeSelect.Root size="sm">
+                                        <NativeSelect.Field
+                                            value={item.pipe_type ?? 'main'}
+                                            onChange={(e) =>
+                                                onUpdatePipe?.(item.id, { pipe_type: e.target.value })
+                                            }
+                                        >
+                                            <option value="main">Main</option>
+                                            <option value="side">Side</option>
+                                            <option value="building connection">
+                                                Building Connection
+                                            </option>
+                                        </NativeSelect.Field>
+                                        <NativeSelect.Indicator />
+                                    </NativeSelect.Root>
+
+                                    <Text fontSize="sm">Age (years)</Text>
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        max={50}
+                                        value={item.age ?? 0}
+                                        onChange={(e) =>
+                                            onUpdatePipe?.(item.id, {
+                                                age: parseInt(e.target.value),
+                                            })
+                                        }
+                                    />
+                                </VStack>
+                            </>
+                        )}
+
+                        {isJunction(item) && (
+                            <Text color="gray.600" fontSize="sm" fontStyle="italic">
+                                Junctions currently cannot be edited.
+                            </Text>
+                        )}
+                    </>
                 )}
             </VStack>
         </Box>

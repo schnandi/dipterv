@@ -7,9 +7,16 @@ import * as SimLayers from './sim-layers'
 import EditOverlay from './edit-tools/EditOverlay'
 import Toolbox from './edit-tools/Toolbox'
 import BuildingSettingsPanel from './edit-tools/BuildingSettingsPanel'
+import PipeSettingsPanel from './edit-tools/PipeSettingsPanel'
+import dynamic from 'next/dynamic'
+import { api } from '@/lib/api'
+
+const SideDrawer = dynamic(() => import('@/components/ui/town/SideDrawer'), {
+    ssr: false,
+})
 
 
-interface Road {
+export interface Road {
     id: number
     start: [number, number]
     end: [number, number]
@@ -18,12 +25,14 @@ interface Road {
     endBuildingId?: number
     startJunctionId?: number
     endJunctionId?: number
+    age: number
 }
-interface Building {
+export interface Building {
     id: number
     corners: [number, number][]
     center: [number, number]
     district?: string
+    building_type?: string
     rotation?: number
 }
 interface ExternalGrid {
@@ -58,9 +67,9 @@ export interface TownCanvasProps {
     externalGrid?: ExternalGrid
     pumps?: PumpInfo[]
     showTerrain?: boolean
-    showFlow?: boolean
-    onSelect?: (sel: { type: 'road' | 'building' | 'junction'; id: number } | null) => void
-    selected?: { type: 'road' | 'building' | 'junction'; id: number } | null
+    showFlow?: boolean,
+    pipeParameters?: Record<string, any>
+    timestamps?: string[]
 }
 
 /**
@@ -82,10 +91,11 @@ export default function TownCanvas({
     pumps,
     showTerrain = true,
     showFlow = false,
-    onSelect,
-    selected
+    pipeParameters,
+    timestamps
 }: TownCanvasProps) {
     const [editMode, setEditMode] = useState<'addBuilding' | 'addPipe' | 'delete' | null>(null)
+    const [selected, setSelected] = useState<{ type: 'road' | 'building' | 'junction'; id: number } | null>(null)
     const [draftBuildings, setDraftBuildings] = useState(buildings)
     React.useEffect(() => {
         setDraftBuildings(
@@ -107,9 +117,90 @@ export default function TownCanvas({
     } | null>(null)
 
 
+
+
     const [isPanning, setIsPanning] = useState(false)
     const stageRef = useRef<any>(null);
     const isDraggingBuilding = useRef(false);
+
+    const drawerItem = useMemo(() => {
+        if (!selected) return null
+
+        // 🧮 Simulate mode: live values
+        if (mode === 'simulate' && frame != null) {
+            // ⚙️ Just extract timestamp array if available (we assume all have same length)
+            const tsArray =
+                pipeVelocities?.[Object.keys(pipeVelocities)[0]] ??
+                sinkFlows?.[Object.keys(sinkFlows)[0]] ??
+                junctions?.[Object.keys(junctions)[0]]
+
+            const ts = tsArray ? `${timestamps![frame]}` : ''
+
+            if (selected.type === 'road') {
+                const vel = pipeVelocities?.[`v_mean_pipe_${selected.id}`]?.[frame] ?? 0
+                const flow = pipeFlows?.[`flow_pipe_${selected.id}`]?.[frame] ?? 0
+                const staticInfo = pipeParameters?.[selected.id] || {}   // ✅ restore static data
+                const geo = draftPipes.find(r => r.id === selected.id) || {}
+                return {
+                    type: 'road',
+                    id: selected.id,
+                    timestamp: ts,
+                    value: vel,
+                    flow,
+                    ...staticInfo,
+                    ...geo,
+                }
+            }
+
+            if (selected.type === 'building') {
+                const sink = sinkFlows?.[`mdot_sink_${selected.id}`]?.[frame] ?? 0
+                const geo = draftBuildings.find(b => b.id === selected.id) || {}
+                return {
+                    type: 'building',
+                    id: selected.id,
+                    timestamp: ts,
+                    value: sink,
+                    ...geo,
+                }
+            }
+
+            if (selected.type === 'junction') {
+                const pressure = junctions?.[`p_bar_junction_${selected.id}`]?.[frame] ?? 0
+                const geo = draftJunctions.find(j => j.id === selected.id) || {}
+                return {
+                    type: 'junction',
+                    id: selected.id,
+                    timestamp: ts,
+                    value: pressure,
+                    ...geo,
+                }
+            }
+        }
+
+        if (mode === 'edit') {
+            if (selected.type === 'road') {
+                return draftPipes.find(r => r.id === selected.id)
+            } else if (selected.type === 'building') {
+                return draftBuildings.find(b => b.id === selected.id)
+            } else if (selected.type === 'junction') {
+                return draftJunctions.find(j => j.id === selected.id)
+            }
+        }
+
+
+        return null
+    }, [
+        selected,
+        draftBuildings,
+        draftPipes,
+        draftJunctions,
+        mode,
+        frame,
+        pipeVelocities,
+        pipeFlows,
+        sinkFlows,
+        junctions,
+    ])
 
 
     const currentBuildings = mode === 'edit' ? draftBuildings : buildings
@@ -120,6 +211,9 @@ export default function TownCanvas({
 
     const [scale, setScale] = useState(1)
     const [pos, setPos] = useState({ x: 0, y: 0 })
+
+
+
 
     const handleWheel = (e: any) => {
         e.evt.preventDefault()
@@ -237,8 +331,18 @@ export default function TownCanvas({
     const [buildingConfig, setBuildingConfig] = useState({
         size: 40,
         rotation: 0,
-        district: 'residential'
+        buildingType: 'single_family',
     })
+
+    const [pipeConfig, setPipeConfig] = useState({
+        pipe_type: 'main',
+        age: 0,
+    })
+
+    const getDistrictForType = (type: string): string =>
+        ['factory', 'warehouse', 'processing_plant'].includes(type)
+            ? 'industrial'
+            : 'residential'
 
     const handleBuildingDrag = (id: number, newCorners: [number, number][]) => {
         // Compute new building center
@@ -285,6 +389,100 @@ export default function TownCanvas({
         isDraggingBuilding.current = false;
     }
 
+    function validateAndCleanTownData(data: { junctions: any[]; roads: any[]; buildings: any[] }) {
+        const eps = 1e-3;
+
+        // 🔹 Helper: round coordinates to nearest 0.001 to prevent float mismatches
+        const roundCoord = (pt: [number, number]): [number, number] => [
+            Number(pt[0].toFixed(3)),
+            Number(pt[1].toFixed(3)),
+        ];
+
+        // 1️⃣ Merge duplicate junctions
+        const uniqueJunctions: any[] = [];
+        const junctionMap = new Map(); // oldId -> newId
+
+        data.junctions.forEach(j => {
+            // round coords first to reduce near-duplicates
+            j.coord = roundCoord(j.coord);
+            const existing = uniqueJunctions.find(
+                u => Math.hypot(u.coord[0] - j.coord[0], u.coord[1] - j.coord[1]) < eps
+            );
+            if (existing) {
+                junctionMap.set(j.id, existing.id);
+            } else {
+                uniqueJunctions.push(j);
+                junctionMap.set(j.id, j.id);
+            }
+        });
+
+        // 2️⃣ Rewire pipes to merged junction IDs
+        const cleanedPipes = data.roads
+            .map(p => {
+                const start = roundCoord(p.start);
+                const end = roundCoord(p.end);
+                return {
+                    ...p,
+                    start,
+                    end,
+                    startJunctionId: junctionMap.get(p.startJunctionId) ?? p.startJunctionId,
+                    endJunctionId: junctionMap.get(p.endJunctionId) ?? p.endJunctionId,
+                };
+            })
+            .filter(p => p.startJunctionId !== undefined && p.endJunctionId !== undefined);
+
+        // 3️⃣ Remove unconnected junctions
+        const usedJunctions = new Set();
+        cleanedPipes.forEach(p => {
+            usedJunctions.add(p.startJunctionId);
+            usedJunctions.add(p.endJunctionId);
+        });
+        data.buildings.forEach(b => {
+            const j = data.junctions.find(j => j.buildingId === b.id);
+            if (j) usedJunctions.add(j.id);
+        });
+        const connectedJunctions = uniqueJunctions.filter(j => usedJunctions.has(j.id));
+
+        // 4️⃣ Deduplicate pipes (same endpoints)
+        const uniquePipes: any[] = [];
+        for (const p of cleanedPipes) {
+            const dup = uniquePipes.find(
+                u =>
+                    (u.startJunctionId === p.startJunctionId && u.endJunctionId === p.endJunctionId) ||
+                    (u.startJunctionId === p.endJunctionId && u.endJunctionId === p.startJunctionId)
+            );
+            if (!dup) uniquePipes.push(p);
+        }
+
+        // 5️⃣ Ensure every building has a junction
+        const finalJunctions = [...connectedJunctions];
+        data.buildings.forEach(b => {
+            // round center
+            b.center = roundCoord(b.center);
+            const linked = finalJunctions.find(j => j.buildingId === b.id);
+            if (!linked) {
+                const cx = b.corners.reduce((s: any, c: any[]) => s + c[0], 0) / b.corners.length;
+                const cy = b.corners.reduce((s: any, c: any[]) => s + c[1], 0) / b.corners.length;
+                const newJ = { id: Date.now() + b.id, coord: roundCoord([cx, cy]), buildingId: b.id };
+                finalJunctions.push(newJ);
+            }
+        });
+
+        // 6️⃣ Final rounding pass to ensure clean export
+        finalJunctions.forEach(j => (j.coord = roundCoord(j.coord)));
+        uniquePipes.forEach(p => {
+            p.start = roundCoord(p.start);
+            p.end = roundCoord(p.end);
+        });
+
+        return {
+            ...data,
+            roads: uniquePipes,
+            junctions: finalJunctions,
+        };
+    }
+
+
     return (
         <>
             <Stage
@@ -299,7 +497,7 @@ export default function TownCanvas({
                 onWheel={handleWheel}
                 onMouseDown={(e) => {
                     const stage = e.target.getStage();
-                    if (e.target === stage) onSelect?.(null);
+                    if (e.target === stage) setSelected?.(null);
                     const isBackground = e.target === stage;
                     const enablePanning = isBackground && !isDraggingBuilding.current;
                     setIsPanning(enablePanning);
@@ -427,7 +625,7 @@ export default function TownCanvas({
                         sinkFlows={sinkFlows ?? {}}
                         frame={frame ?? 0}
                         editMode={editMode}
-                        onSelect={onSelect}
+                        onSelect={setSelected}
                         onDragMove={handleBuildingDrag}
                         onDragStart={handleDragStart}
                         onDragEnd={handleDragEnd}
@@ -444,7 +642,7 @@ export default function TownCanvas({
                     {mode === 'edit' ? (
                         <EditLayers.JunctionsLayer
                             junctions={draftJunctions}
-                            onSelect={onSelect}
+                            onSelect={setSelected}
                         />
                     ) : (
                         <SimLayers.JunctionsLayer
@@ -452,7 +650,7 @@ export default function TownCanvas({
                             junctionCoords={junctionCoords}
                             frame={frame}
                             externalGrid={externalGrid}
-                            onSelect={onSelect}
+                            onSelect={setSelected}
                         />
                     )}
                 </Layer>
@@ -463,7 +661,7 @@ export default function TownCanvas({
                         pipeVelocities={pipeVelocities}
                         pipeFlows={pipeFlows}
                         showFlow={showFlow}
-                        onSelect={onSelect}
+                        onSelect={setSelected}
                     />
                 </Layer>
 
@@ -477,7 +675,10 @@ export default function TownCanvas({
                         draftJunctions={draftJunctions}
                         setDraftJunctions={setDraftJunctions}
                         buildingConfig={buildingConfig}
+                        pipeConfig={pipeConfig}
+                        getDistrictForType={getDistrictForType}
                         onToolDone={() => setEditMode(null)}
+                        onSelect={setSelected}
                     />
                 )}
 
@@ -487,8 +688,32 @@ export default function TownCanvas({
             {mode === 'edit' && (
                 <Toolbox
                     currentTool={editMode}
-                    onSelect={setEditMode}
-                    onSave={() => console.log('TODO: send to backend', { draftBuildings, draftPipes })}
+                    onSelect={(tool) => {
+                        setEditMode(tool);
+                        setSelected(null);
+                    }}
+                    onSave={async () => {
+                        try {
+                            const params = window.location.pathname.split('/');
+                            const townId = params[params.indexOf('towns') + 1];
+
+                            const cleaned = validateAndCleanTownData({
+                                roads: draftPipes,
+                                buildings: draftBuildings,
+                                junctions: draftJunctions,
+                            });
+
+                            const res = await api.put(`/towns/${townId}/data`, cleaned);
+
+                            alert('Town saved successfully! Previous simulations were removed.');
+
+                            const event = new CustomEvent('town-updated', { detail: { townId } });
+                            window.dispatchEvent(event);
+                        } catch (err) {
+                            console.error('❌ Failed to save town:', err);
+                            alert('Failed to save town data.');
+                        }
+                    }}
                     onReset={() => {
                         // 1️⃣ Reset drafts to original input
                         setDraftBuildings(buildings);
@@ -550,9 +775,43 @@ export default function TownCanvas({
             {mode === 'edit' && editMode === 'addBuilding' && (
                 <BuildingSettingsPanel
                     size={buildingConfig.size}
-                    rotation={buildingConfig.rotation}
-                    district={buildingConfig.district}
+                    buildingType={buildingConfig.buildingType}
                     onChange={(values) => setBuildingConfig({ ...buildingConfig, ...values })}
+                />
+            )}
+            {mode === 'edit' && editMode === 'addPipe' && (
+                <PipeSettingsPanel
+                    pipe_type={pipeConfig.pipe_type}
+                    age={pipeConfig.age}
+                    onChange={(values) => setPipeConfig({ ...pipeConfig, ...values })}
+                />
+            )}
+            {drawerItem && (
+                <SideDrawer
+                    open={!!selected}
+                    onOpenChange={() => setSelected(null)}
+                    item={drawerItem}
+                    isSim={mode === 'simulate'}
+                    onUpdateBuilding={(id, values) =>
+                        setDraftBuildings(prev =>
+                            prev.map(b => {
+                                if (b.id !== id) return b;
+
+                                const updated = { ...b, ...values };
+
+                                // 🧮 Automatically recalc district if building_type changes
+                                if ('building_type' in values && values.building_type) {
+                                    const newDistrict = getDistrictForType(values.building_type);
+                                    return { ...updated, district: newDistrict };
+                                }
+
+                                return updated;
+                            })
+                        )
+                    }
+                    onUpdatePipe={(id, values) =>
+                        setDraftPipes(prev => prev.map(p => p.id === id ? { ...p, ...values } : p))
+                    }
                 />
             )}
         </>

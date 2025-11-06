@@ -16,6 +16,7 @@ interface Pipe {
     startJunctionId?: number
     endJunctionId?: number
     pipe_type?: string
+    age: number
 }
 
 interface Props {
@@ -29,9 +30,15 @@ interface Props {
     buildingConfig: {
         size: number
         rotation: number
-        district: string
+        buildingType: string
     }
+    pipeConfig: {
+        pipe_type: string
+        age: number
+    }
+    getDistrictForType: (type: string) => string
     onToolDone?: () => void
+    onSelect?: (sel: { type: 'road' | 'building' | 'junction'; id: number } | null) => void
 }
 
 export default function EditOverlay({
@@ -43,7 +50,10 @@ export default function EditOverlay({
     setDraftPipes,
     setDraftJunctions,
     buildingConfig,
-    onToolDone
+    onToolDone,
+    getDistrictForType,
+    pipeConfig,
+    onSelect
 }: Props) {
     const [draftPipe, setDraftPipe] = useState<{
         start: [number, number]
@@ -53,6 +63,8 @@ export default function EditOverlay({
     } | null>(null)
 
     const SNAP_RADIUS = 25
+
+    const generateId = () => Date.now() + Math.floor(Math.random() * 100000);
 
     /** 🔍 Find nearest junction or pipe projection */
     const findSnapTarget = (
@@ -105,18 +117,29 @@ export default function EditOverlay({
 
         /** 🏠 Add Building */
         if (tool === 'addBuilding') {
-            const { size, rotation, district } = buildingConfig
-            const id = Date.now()
+            const { size, rotation, buildingType } = buildingConfig
+            const district = getDistrictForType(buildingType)
+            const id = generateId()
             const corners: [number, number][] = [
                 [x - size / 2, y - size / 2],
                 [x + size / 2, y - size / 2],
                 [x + size / 2, y + size / 2],
                 [x - size / 2, y + size / 2],
             ]
-            const newBuilding = { id, corners, rotation, district, center: [x, y] as [number, number] }
-            const newJunction: Junction = { id: id + 1, coord: [x, y], buildingId: id }
+            const rounded: [number, number] = [Number(x.toFixed(3)), Number(y.toFixed(3))];
+            const newBuilding = {
+                id,
+                corners,
+                rotation,
+                district,
+                building_type: buildingType,
+                center: rounded,
+            };
+            const newJunction: Junction = { id: id + 1, coord: rounded, buildingId: id };
+
             setDraftBuildings(prev => [...prev, newBuilding])
             setDraftJunctions(prev => [...prev, newJunction])
+            onSelect?.({ type: 'building', id })
             onToolDone?.()
             return
         }
@@ -172,80 +195,118 @@ export default function EditOverlay({
 
         /** ➕ Add Pipe */
         if (tool === 'addPipe') {
-            const snap = findSnapTarget(x, y)
+            const snap = findSnapTarget(x, y);
 
             if (!draftPipe) {
-                // Start pipe
+                // --- Start pipe ---
                 if (snap?.type === 'pipe') {
-                    const newJ: Junction = { id: Date.now(), coord: snap.coord }
-                    setDraftJunctions(prev => [...prev, newJ])
-                    setDraftPipes(prev =>
-                        prev.flatMap(p =>
-                            p.id === snap.id
-                                ? [
-                                    { ...p, end: snap.coord, endJunctionId: newJ.id },
-                                    {
-                                        id: Date.now() + 1,
-                                        start: snap.coord,
-                                        end: p.end,
-                                        startJunctionId: newJ.id,
-                                        pipe_type: p.pipe_type,
-                                    },
-                                ]
-                                : [p]
-                        )
-                    )
-                    setDraftPipe({ start: newJ.coord, end: newJ.coord, startJunctionId: newJ.id })
+                    const newJ: Junction = { id: generateId(), coord: snap.coord };
+                    setDraftJunctions(prev => [...prev, newJ]);
+
+                    setDraftPipes(prev => {
+                        const updated: Pipe[] = [];
+                        for (const p of prev) {
+                            if (p.id === snap.id) {
+                                // split into two new pipes
+                                const left = {
+                                    ...p,
+                                    end: snap.coord,
+                                    endJunctionId: newJ.id,
+                                };
+                                const right = {
+                                    ...p,
+                                    id: generateId(),
+                                    start: snap.coord,
+                                    startJunctionId: newJ.id,
+                                };
+                                updated.push(left, right);
+                            } else {
+                                updated.push(p);
+                            }
+                        }
+                        return updated;
+                    });
+
+                    setDraftPipe({
+                        start: newJ.coord,
+                        end: newJ.coord,
+                        startJunctionId: newJ.id,
+                    });
                 } else {
+                    // not snapping to existing pipe
                     setDraftPipe({
                         start: snap ? snap.coord : [x, y],
                         end: [x, y],
                         startJunctionId: snap?.type === 'junction' ? snap.id : undefined,
-                    })
+                    });
                 }
             } else {
-                // Finish pipe
-                let endCoord: [number, number] = [x, y]
-                let endJunctionId: number | undefined
+                // --- Finish pipe ---
+                let endCoord: [number, number] = [x, y];
+                let endJunctionId: number | undefined;
 
                 if (snap?.type === 'pipe') {
-                    const newJ: Junction = { id: Date.now(), coord: snap.coord }
-                    endCoord = newJ.coord
-                    endJunctionId = newJ.id
-                    setDraftJunctions(prev => [...prev, newJ])
-                    setDraftPipes(prev =>
-                        prev.flatMap(p =>
-                            p.id === snap.id
-                                ? [
-                                    { ...p, end: snap.coord, endJunctionId: newJ.id },
-                                    {
-                                        id: Date.now() + 2,
-                                        start: snap.coord,
-                                        end: p.end,
-                                        startJunctionId: newJ.id,
-                                        pipe_type: p.pipe_type,
-                                    },
-                                ]
-                                : [p]
-                        )
-                    )
+                    const newJ: Junction = { id: generateId(), coord: snap.coord };
+                    setDraftJunctions(prev => [...prev, newJ]);
+
+                    setDraftPipes(prev => {
+                        const updated: Pipe[] = [];
+                        for (const p of prev) {
+                            if (p.id === snap.id) {
+                                const left = {
+                                    ...p,
+                                    end: snap.coord,
+                                    endJunctionId: newJ.id,
+                                };
+                                const right = {
+                                    ...p,
+                                    id: generateId(),
+                                    start: snap.coord,
+                                    startJunctionId: newJ.id,
+                                };
+                                updated.push(left, right);
+                            } else {
+                                updated.push(p);
+                            }
+                        }
+                        return updated;
+                    });
+
+                    endCoord = newJ.coord;
+                    endJunctionId = newJ.id;
                 } else if (snap?.type === 'junction') {
-                    endCoord = snap.coord
-                    endJunctionId = snap.id
+                    endCoord = snap.coord;
+                    endJunctionId = snap.id;
+
+                    // If this junction belongs to a building, snap that building's center
+                    const linked = draftJunctions.find(j => j.id === snap.id && j.buildingId);
+                    if (linked?.buildingId) {
+                        setDraftBuildings(prev =>
+                            prev.map(b =>
+                                b.id === linked.buildingId ? { ...b, center: snap.coord } : b
+                            )
+                        );
+                    }
+                } else {
+                    const newJ: Junction = { id: generateId(), coord: [x, y] };
+                    setDraftJunctions(prev => [...prev, newJ]);
+                    endCoord = newJ.coord;
+                    endJunctionId = newJ.id;
                 }
 
                 const newPipe: Pipe = {
-                    id: Date.now(),
+                    id: generateId(),
                     start: draftPipe.start,
                     end: endCoord,
                     startJunctionId: draftPipe.startJunctionId,
                     endJunctionId,
-                    pipe_type: 'side',
-                }
+                    pipe_type: pipeConfig.pipe_type,
+                    age: pipeConfig.age,
+                };
 
-                setDraftPipes(prev => [...prev, newPipe])
-                setDraftPipe(null)
-                onToolDone?.()
+                setDraftPipes(prev => [...prev, newPipe]);
+                setDraftPipe(null);
+                onToolDone?.();
             }
         }
     }

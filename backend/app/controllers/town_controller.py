@@ -186,3 +186,43 @@ class RoadLeak(Resource):
             'leak': leak_entry,
             'new_pipes': [seg1, seg2]
         }, 200
+
+
+@ns.route('/<int:town_id>/data')
+@ns.param('town_id', 'The town identifier')
+class TownDataUpdate(Resource):
+    @ns.doc('update_town_data')
+    def put(self, town_id):
+        """
+        Update the full geometry (roads, buildings, junctions, etc.) of a town.
+        Automatically deletes any linked simulations so they can be regenerated.
+        """
+        from app.models import Simulation  # import here to avoid circular refs
+
+        town = Town.query.get_or_404(town_id, description="Town not found")
+        payload = request.get_json(force=True) or {}
+
+        if not isinstance(payload, dict):
+            ns.abort(400, "Invalid data: expected JSON object with town data.")
+
+        # Update the town data
+        data = town.data or {}
+
+        for key in ("roads", "buildings", "junctions"):
+            if key in payload:
+                data[key] = payload[key]
+
+        town.data = data
+        flag_modified(town, "data")
+
+        # Delete any existing simulations for this town
+        old_sims = Simulation.query.filter_by(town_id=town_id).all()
+        for sim in old_sims:
+            db.session.delete(sim)
+
+        db.session.commit()
+
+        return {
+            "message": "Town data updated successfully. Existing simulations removed.",
+            "deleted_simulations": len(old_sims)
+        }, 200

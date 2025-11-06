@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
+import Konva from 'konva'
+import React, { useEffect, useState } from 'react'
 import { Line, Group, Circle } from 'react-konva'
 
 interface Building {
@@ -54,7 +55,12 @@ export function BuildingsLayer({
     setActiveRotation,
 }: Props) {
     const [hoveredId, setHoveredId] = useState<number | null>(null)
-
+    useEffect(() => {
+        const stage = Konva.stages[0]
+        if (stage) {
+            stage.batchDraw()
+        }
+    }, [buildings.length])
     return (
         <>
             {buildings.map((b) => {

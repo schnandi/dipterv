@@ -20,8 +20,6 @@ import {
 } from '@chakra-ui/react'
 import { LuArrowLeft } from 'react-icons/lu'
 import { api } from '../../../lib/api'
-import TownMap from '../../../components/ui/town/TownMap'
-import TownMapSim from '../../../components/ui/town/TownMapSim'
 import TownCanvas from '@/components/ui/town-map/TownCanvas'
 import SimulationControls from '../../../components/ui/town/SimulationControls'
 
@@ -130,59 +128,21 @@ export default function TownDetailPage() {
         setRegenerating(false);
     };
 
+    React.useEffect(() => {
+        const handleTownUpdated = (e: CustomEvent) => {
+            if (String(e.detail.townId) === String(townId)) {
+                // 🧹 Clear simulation list + detail from cache
+                mutate(`/simulations/town/${townId}`);
+                mutate(`/simulations/${sims?.[0]?.id}`);
+            }
+        };
+
+        window.addEventListener('town-updated', handleTownUpdated as EventListener);
+        return () => window.removeEventListener('town-updated', handleTownUpdated as EventListener);
+    }, [mutate, townId, sims]);
+
     if (isLoading) return <Spinner />
     if (error) return <Text color="red.500">Failed to load town.</Text>
-
-    // build the object that SideDrawer needs
-    let drawerItem: any = null
-    if (selected) {
-        if (viewMode === 'simulate' && simDetail) {
-            // simulation-mode: timestamp + numeric value
-            const ts = simDetail.details.timestamps[frame]
-            let val = 0
-            if (selected.type === 'road') {
-                val = simDetail.details.pipe_velocities[`v_mean_pipe_${selected.id}`][frame]
-                // grab the static pipe info and merge it in:
-                const staticInfo = simDetail.details.pipe_parameters[selected.id] || {}
-                const flow = simDetail.details.pipe_flows[`flow_pipe_${selected.id}`][frame];
-                const geo = townData!.data.roads.find(r => r.id === selected.id) || {}
-                drawerItem = {
-                    type: 'road',
-                    id: selected.id,
-                    timestamp: ts,
-                    value: val,
-                    flow: flow,
-                    ...staticInfo,
-                    ...geo
-                }
-            } else if (selected.type === 'building') {
-                val = simDetail.details.sink_flows[`mdot_sink_${selected.id}`][frame]
-                const geo = townData!.data.buildings.find(b => b.id === selected.id) || {}
-                drawerItem = {
-                    type: selected.type,
-                    id: selected.id,
-                    timestamp: ts,
-                    value: val,
-                    ...geo
-                }
-            } else {
-                val = simDetail.details.junction_pressures[`p_bar_junction_${selected.id}`][frame]
-                drawerItem = {
-                    type: selected.type,
-                    id: selected.id,
-                    timestamp: ts,
-                    value: val
-                }
-            }
-        } else {
-            // edit-mode: show raw geometry object
-            if (selected.type === 'road') {
-                drawerItem = townData!.data.roads.find(r => r.id === selected.id)
-            } else if (selected.type === 'building') {
-                drawerItem = townData!.data.buildings.find(b => b.id === selected.id)
-            }
-        }
-    }
 
     return (
         <Flex direction="column" h="100vh" overflow="hidden">
@@ -291,8 +251,8 @@ export default function TownDetailPage() {
                         pumps={simDetail?.details.pumps}
                         showTerrain={showTerrain}
                         showFlow={showFlow}
-                        onSelect={setSelected}
-                        selected={selected}
+                        pipeParameters={simDetail?.details.pipe_parameters}
+                        timestamps={simDetail?.details.timestamps}
                     />
                 )}
             </Box>
@@ -316,13 +276,6 @@ export default function TownDetailPage() {
                     />
                 </Box>
             )}
-
-            <SideDrawer
-                open={!!selected}
-                onOpenChange={() => setSelected(null)}
-                item={drawerItem}
-                isSim={viewMode === 'simulate'}
-            />
         </Flex>
     )
 }
