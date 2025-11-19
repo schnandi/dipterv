@@ -138,7 +138,7 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
         nominal_daily_L = baseline_daily * multipliers.get(btype, 1.0)
         nominal_kg_s = nominal_daily_L / 86400.0
         pp.create_sink(net, junction=j_idx, mdot_kg_per_s=nominal_kg_s,
-                       name=f"Sink {b['id']}", index=b["id"])
+                       name=f"Sink {b['id']}")
         sink_info.append((b["id"], btype, nominal_kg_s))
 
     return net, sink_info

@@ -78,6 +78,10 @@ interface SimulationFull extends SimulationSummary {
             k_mm: number
             material?: string | null
             max_velocity_m_per_s?: number | null
+            age?: number | null
+            pipe_type?: string | null
+            mean_pressure_bar?: number | null
+            std_pressure_bar?: number | null
         }>
         external_grid: ExternalGrid
         pumps: PumpInfo[]

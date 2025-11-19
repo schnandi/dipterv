@@ -10,6 +10,7 @@ import BuildingSettingsPanel from './edit-tools/BuildingSettingsPanel'
 import PipeSettingsPanel from './edit-tools/PipeSettingsPanel'
 import dynamic from 'next/dynamic'
 import { api } from '@/lib/api'
+import BurstRiskPanel from './sim-tools/BurstRiskPanel'
 
 const SideDrawer = dynamic(() => import('@/components/ui/town/SideDrawer'), {
     ssr: false,
@@ -117,7 +118,7 @@ export default function TownCanvas({
     } | null>(null)
 
 
-
+    const [highlightedPipeId, setHighlightedPipeId] = useState<number | null>(null);
 
     const [isPanning, setIsPanning] = useState(false)
     const stageRef = useRef<any>(null);
@@ -328,6 +329,8 @@ export default function TownCanvas({
         setDraftPipes(withJunctionIds);
     }, [junctionCoords, buildings, roads]);
 
+
+
     const [buildingConfig, setBuildingConfig] = useState({
         size: 40,
         rotation: 0,
@@ -482,6 +485,32 @@ export default function TownCanvas({
         };
     }
 
+    function focusOnPipe(pipeId: number) {
+        const pipe = draftPipes.find(p => p.id === pipeId);
+        if (!pipe) {
+            return;
+        }
+
+        if (!stageRef.current) {
+            return;
+        }
+
+        const stage = stageRef.current.getStage?.() || stageRef.current;
+
+        const midX = (pipe.start[0] + pipe.end[0]) / 2;
+        const midY = (pipe.start[1] + pipe.end[1]) / 2;
+        const zoom = 1.4;
+
+        stage.scale({ x: zoom, y: zoom });
+        stage.position({
+            x: stage.width() / 2 - midX * zoom,
+            y: stage.height() / 2 - midY * zoom,
+        });
+        stage.batchDraw();
+        stage.getLayers().forEach((layer: { draw: () => any }) => layer.draw());
+        stage.draw();
+    }
+
 
     return (
         <>
@@ -489,10 +518,6 @@ export default function TownCanvas({
                 ref={stageRef}
                 width={window.innerWidth}
                 height={window.innerHeight}
-                scaleX={scale}
-                scaleY={scale}
-                x={pos.x}
-                y={pos.y}
                 draggable={isPanning && !isDraggingBuilding.current} // 🚫 stage can't move when building dragging
                 onWheel={handleWheel}
                 onMouseDown={(e) => {
@@ -664,6 +689,21 @@ export default function TownCanvas({
                         onSelect={setSelected}
                     />
                 </Layer>
+                {highlightedPipeId !== null && (
+                    <Layer listening={false}>
+                        {(() => {
+                            const pipe = draftPipes.find(p => p.id === highlightedPipeId);
+                            if (!pipe) return null;
+                            return (
+                                <SimLayers.HighlightedPipe
+                                    key={pipe.id}
+                                    start={pipe.start}
+                                    end={pipe.end}
+                                />
+                            );
+                        })()}
+                    </Layer>
+                )}
 
                 {mode === 'edit' && (
                     <EditOverlay
@@ -685,6 +725,17 @@ export default function TownCanvas({
 
 
             </Stage>
+            {mode === 'simulate' && (
+                <BurstRiskPanel
+                    townId={Number(window.location.pathname.split('/').pop())}
+                    onSelectPipe={(pipeId) => {
+                        setSelected({ type: 'road', id: pipeId });
+                        focusOnPipe(pipeId);
+                        setHighlightedPipeId(pipeId);
+                        setTimeout(() => setHighlightedPipeId(null), 2500);
+                    }}
+                />
+            )}
             {mode === 'edit' && (
                 <Toolbox
                     currentTool={editMode}

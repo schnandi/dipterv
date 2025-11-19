@@ -25,6 +25,10 @@ interface SimulationItem {
     to_junction?: number
     length_m?: number
     diameter_m?: number
+    age?: number | null
+    pipe_type?: string | null
+    mean_pressure_bar?: number | null
+    std_pressure_bar?: number | null
     k_mm?: number
     material?: string | null
     max_velocity_m_per_s?: number | null
@@ -165,11 +169,20 @@ export default function SideDrawer({
                                 <Text><b>Length (m):</b> {item.length_m?.toFixed(2)}</Text>
                                 <Text><b>Diameter (m):</b> {item.diameter_m}</Text>
                                 <Text><b>Roughness (k_mm):</b> {item.k_mm?.toFixed(6)}</Text>
+                                {item.pipe_type && <Text><b>Pipe Type:</b> {item.pipe_type}</Text>}
+                                {typeof item.age === 'number' && <Text><b>Age:</b> {item.age} years</Text>}
+
                                 {item.material && <Text><b>Material:</b> {item.material}</Text>}
                                 {item.max_velocity_m_per_s && (
                                     <Text>
                                         <b>Max Velocity:</b> {item.max_velocity_m_per_s} m/s
                                     </Text>
+                                )}
+                                {typeof item.mean_pressure_bar === 'number' && (
+                                    <Text><b>Mean Pressure:</b> {item.mean_pressure_bar.toFixed(3)} bar</Text>
+                                )}
+                                {typeof item.std_pressure_bar === 'number' && (
+                                    <Text><b>Pressure Std Dev:</b> {item.std_pressure_bar.toFixed(3)} bar</Text>
                                 )}
                                 <Button
                                     mt={3}

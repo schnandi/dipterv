@@ -23,8 +23,9 @@ def create_app():
               doc='/docs')  # Swagger UI available at /docs
 
     # Import and add namespaces (these will be your controllers).
-    from app.controllers import town_controller, simulation_controller
+    from app.controllers import town_controller, simulation_controller, burst_risk_controller
     api.add_namespace(town_controller.ns)
     api.add_namespace(simulation_controller.ns)
+    api.add_namespace(burst_risk_controller.ns)
 
     return app

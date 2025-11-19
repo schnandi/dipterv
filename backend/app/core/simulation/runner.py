@@ -51,4 +51,4 @@ def run_simulation(city_data, n_steps=96):
     # --- Run time series with pandapipes' solver ---
     run_timeseries(net, range(n_steps), iter=200)
 
-    return format_results(net, ow)
+    return format_results(net, ow, city_data)
