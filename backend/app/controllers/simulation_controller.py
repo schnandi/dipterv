@@ -45,24 +45,34 @@ class SimulationList(Resource):
         if not town:
             ns.abort(404, f"Town with id {town_id} not found.")
 
-        # delete any existing simulations for this town
-        existing = Simulation.query.filter_by(town_id=town_id).all()
-        for sim in existing:
-            db.session.delete(sim)
-        # flush so that any foreign‐key constraints clear out
-        db.session.flush()
-
         try:
             result = run_simulation(town.data)
         except Exception as e:
             ns.abort(500, f"Simulation failed: {str(e)}")
 
-        # create & persist the new simulation
-        sim = Simulation(title=title, details=result, town_id=town_id)
+        # ✅ Check if this town already has a baseline
+        existing_baseline = Simulation.query.filter_by(town_id=town_id, is_baseline=True).first()
+
+        if existing_baseline is None:
+            # First sim for this town → baseline
+            sim = Simulation(
+                title=f"Baseline Simulation for {town.name or f'Town {town_id}'}",
+                town_id=town_id,
+                details=result,
+                is_baseline=True,
+            )
+        else:
+            # Normal sim (e.g. after leak)
+            sim = Simulation(
+                title=title,
+                town_id=town_id,
+                details=result,
+                is_baseline=False,
+                baseline_id=existing_baseline.id,
+            )
+
         db.session.add(sim)
         db.session.commit()
-
-        return '', 201
 
 @ns.route('/town/<int:town_id>')
 @ns.param('town_id', 'The town identifier')

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Stage, Layer } from 'react-konva'
 import * as EditLayers from './edit-layers'
 import * as SimLayers from './sim-layers'
@@ -11,6 +11,8 @@ import PipeSettingsPanel from './edit-tools/PipeSettingsPanel'
 import dynamic from 'next/dynamic'
 import { api } from '@/lib/api'
 import BurstRiskPanel from './sim-tools/BurstRiskPanel'
+import PipeSearchPanel from './sim-tools/PipeSearchPanel'
+import LeakRegionLayer from './sim-layers/LeakRegionLayer'
 
 const SideDrawer = dynamic(() => import('@/components/ui/town/SideDrawer'), {
     ssr: false,
@@ -53,6 +55,40 @@ interface Junction {
     buildingId?: number       // optional link to the building that owns it
 }
 
+export interface LeakRegion {
+    pipe_id: number;
+    center: [number, number];
+    radius: number;
+}
+
+export interface TrilaterationPipe {
+    pipe_id: number;
+    x: number;
+    y: number;
+    r: number;
+    probability: number;
+}
+
+export interface TriangulatedRegion {
+    leak_point: [number, number];
+    uncertainty_radius: number;
+    supporting_pipes: TrilaterationPipe[];
+}
+
+export interface LeakRiskResponse {
+    town_id: number;
+    baseline_simulation_id: number;
+    current_simulation_id: number;
+
+    best_circle: LeakRegion;
+    triangulated: TriangulatedRegion;
+
+    top_pipes: any[];
+    all_pipes: any[];
+
+}
+
+
 export interface TownCanvasProps {
     mode: 'view' | 'edit' | 'simulate'
     roads: Road[]
@@ -71,6 +107,7 @@ export interface TownCanvasProps {
     showFlow?: boolean,
     pipeParameters?: Record<string, any>
     timestamps?: string[]
+    hasLeakSimulation?: boolean;
 }
 
 /**
@@ -93,7 +130,8 @@ export default function TownCanvas({
     showTerrain = true,
     showFlow = false,
     pipeParameters,
-    timestamps
+    timestamps,
+    hasLeakSimulation
 }: TownCanvasProps) {
     const [editMode, setEditMode] = useState<'addBuilding' | 'addPipe' | 'delete' | null>(null)
     const [selected, setSelected] = useState<{ type: 'road' | 'building' | 'junction'; id: number } | null>(null)
@@ -116,6 +154,31 @@ export default function TownCanvas({
         baseRotation: number
         originalCorners: [number, number][]
     } | null>(null)
+
+    const [leakDataV1, setLeakDataV1] = useState<LeakRiskResponse | null>(null);
+    const [leakDataV2, setLeakDataV2] = useState<LeakRiskResponse | null>(null);
+
+    useEffect(() => {
+        async function loadBoth() {
+            const id = Number(window.location.pathname.split("/").pop());
+
+            const [v1, v2] = await Promise.all([
+                api.get(`/leak-risk/${id}`).catch(() => null),
+                api.get(`/leak-risk/v2/${id}`).catch(() => null),
+            ]);
+
+            if (v1?.data) setLeakDataV1(v1.data);
+            if (v2?.data) setLeakDataV2(v2.data);
+        }
+
+        if (mode === "simulate" && hasLeakSimulation) {
+            loadBoth();
+        } else {
+            setLeakDataV1(null);
+            setLeakDataV2(null);
+        }
+    }, [mode, hasLeakSimulation]);
+
 
 
     const [highlightedPipeId, setHighlightedPipeId] = useState<number | null>(null);
@@ -689,6 +752,31 @@ export default function TownCanvas({
                         onSelect={setSelected}
                     />
                 </Layer>
+                <Layer listening={false}>
+                    {/* V1 model (current one, red/blue/orange) */}
+                    {mode === "simulate" && hasLeakSimulation && leakDataV1 && (
+                        <LeakRegionLayer
+                            bestCircle={leakDataV1.best_circle}
+                            triangulated={leakDataV1.triangulated}
+                            showSupporting={true}
+                        />
+                    )}
+
+                    {/* V2 model (we render it in PURPLE so you can compare) */}
+                    {mode === "simulate" && hasLeakSimulation && leakDataV2 && (
+                        <LeakRegionLayer
+                            bestCircle={{
+                                ...leakDataV2.best_circle,
+                                colorOverride: "purple",   // NEW
+                            } as any}
+                            triangulated={{
+                                ...leakDataV2.triangulated,
+                                colorOverride: "purple",   // NEW
+                            } as any}
+                            showSupporting={true}
+                        />
+                    )}
+                </Layer>
                 {highlightedPipeId !== null && (
                     <Layer listening={false}>
                         {(() => {
@@ -726,15 +814,25 @@ export default function TownCanvas({
 
             </Stage>
             {mode === 'simulate' && (
-                <BurstRiskPanel
-                    townId={Number(window.location.pathname.split('/').pop())}
-                    onSelectPipe={(pipeId) => {
-                        setSelected({ type: 'road', id: pipeId });
-                        focusOnPipe(pipeId);
-                        setHighlightedPipeId(pipeId);
-                        setTimeout(() => setHighlightedPipeId(null), 2500);
-                    }}
-                />
+                <>
+                    <PipeSearchPanel
+                        onGoToPipe={(pipeId) => {
+                            setSelected({ type: 'road', id: pipeId })
+                            focusOnPipe(pipeId)
+                            setHighlightedPipeId(pipeId)
+                            setTimeout(() => setHighlightedPipeId(null), 2500)
+                        }}
+                    />
+                    <BurstRiskPanel
+                        townId={Number(window.location.pathname.split('/').pop())}
+                        onSelectPipe={(pipeId) => {
+                            setSelected({ type: 'road', id: pipeId })
+                            focusOnPipe(pipeId)
+                            setHighlightedPipeId(pipeId)
+                            setTimeout(() => setHighlightedPipeId(null), 2500)
+                        }}
+                    />
+                </>
             )}
             {mode === 'edit' && (
                 <Toolbox

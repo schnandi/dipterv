@@ -1,12 +1,19 @@
 'use client'
 import React, { useMemo } from 'react'
-import { Group, Line, Arrow } from 'react-konva'
+import { Group, Line, Arrow, Rect } from 'react-konva'
+
+
+interface Leak {
+    coord: [number, number]
+    rate_kg_per_s: number
+}
 
 interface Road {
     id: number
     start: [number, number]
     end: [number, number]
     pipe_type?: string
+    leak?: Leak
 }
 interface Props {
     roads: Road[]
@@ -22,6 +29,21 @@ const mapColor = (v: number, min: number, max: number) => {
     const r = Math.round(255 * t)
     const g = Math.round(255 * (1 - t))
     return `rgb(${r},${g},0)`
+}
+
+function getLeakColor(rate: number): string {
+    // Clamp between 0 and 0.5 (your max)
+    const clamped = Math.min(rate, 0.5);
+
+    // Map value (0 → greenish, 0.5 → red)
+    const t = clamped / 0.5; // normalize 0–1
+    const r = Math.round(255 * t);
+    const g = Math.round(255 * (1 - t));
+    const b = 0;
+
+    // Slight transparency for layering
+    const alpha = 0.6 + 0.3 * t; // 0.6→0.9
+    return `rgba(${r},${g},${b},${alpha})`;
 }
 
 export function PipesLayer({
@@ -94,6 +116,19 @@ export function PipesLayer({
                             fill={color}
                             stroke={color}
                         />
+                        {r.leak && (
+                            <Rect
+                                x={r.leak.coord[0] - 4}
+                                y={r.leak.coord[1] - 4}
+                                width={8}
+                                height={8}
+                                fill={getLeakColor(r.leak.rate_kg_per_s)}
+                                stroke="black"
+                                strokeWidth={0.5}
+                                cornerRadius={2}
+                                onClick={() => onSelect?.({ type: 'road', id: r.id })}
+                            />
+                        )}
                     </Group>
                 )
             })}

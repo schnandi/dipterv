@@ -12,24 +12,38 @@ from .results_parser import format_results
 
 def run_simulation(city_data, n_steps=96):
     net, sink_info = build_network(city_data)
-
     # --- Generate dynamic consumption profiles ---
     t_daily = np.linspace(0, 24, n_steps)
+
+    # 1. Identify building sinks only (exclude leak sinks)
+    building_sink_indices = []
     profiles = {}
-    for sink_id, btype, nominal in sink_info:
-        prof = get_profile(btype, t_daily)
-        scale = nominal / np.mean(prof)
-        profiles[str(sink_id)] = prof * scale * np.random.uniform(0.9, 1.1, len(prof))
+
+    for sink_idx, sink_row in net.sink.iterrows():
+        name = sink_row["name"]
+        if name.startswith("Sink "):   # Building sinks only
+            b_id = int(name.split()[1])
+            # Find sink info
+            for (orig_b_id, btype, nominal) in sink_info:
+                if orig_b_id == b_id:
+                    prof = get_profile(btype, t_daily)
+                    scale = nominal / np.mean(prof)
+                    profiles[str(sink_idx)] = prof * scale
+                    building_sink_indices.append(sink_idx)
+                    break
 
     df_profiles = pd.DataFrame(profiles)
     ds = DFData(df_profiles)
+
+    print("Actual sink indices used:", building_sink_indices)
+    print("df_profiles.columns:", df_profiles.columns.tolist())
 
     # --- Dynamic sink control ---
     control.ConstControl(
         net,
         element="sink",
         variable="mdot_kg_per_s",
-        element_index=[int(i) for i in df_profiles.columns],
+        element_index=building_sink_indices,      # REAL sink row indices
         data_source=ds,
         profile_name=df_profiles.columns,
     )

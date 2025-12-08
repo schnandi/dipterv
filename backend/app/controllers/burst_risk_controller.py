@@ -15,7 +15,7 @@ ns = Namespace('burst-risk', description='Predict pipe burst risk using trained 
 # -----------------------------
 # 1️⃣ Load trained model + scaler
 # -----------------------------
-MODEL_PATH = Path(__file__).resolve().parent.parent / "core" / "ai" / "pipe_burst_model.pkl"
+MODEL_PATH = Path(__file__).resolve().parent.parent / "core" / "ai" / "burst" / "pipe_burst_model.pkl"
 
 if not MODEL_PATH.exists():
     raise FileNotFoundError(f"❌ Missing ML model file at {MODEL_PATH}")

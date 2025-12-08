@@ -69,13 +69,37 @@ export default function SideDrawer({
         const [x2, y2] = road.end
         const leakJunction: [number, number] = [(x1 + x2) / 2, (y1 + y2) / 2]
 
-        await api.post(`/towns/${townId}/roads/${road.id}/leak`, {
-            original_road_id: road.id,
-            leak_junction: leakJunction,
-            rate_kg_per_s: 0.01,
-        })
+        const rate = getLeakRate(leakSize)
 
-        onOpenChange(false)
+        try {
+            await api.post(`/towns/${townId}/roads/${road.id}/leak`, {
+                original_road_id: road.id,
+                leak_junction: leakJunction,
+                rate_kg_per_s: rate,
+            })
+
+            // ✅ trigger UI refresh just like edit save
+            const event = new CustomEvent('town-updated', { detail: { townId } })
+            window.dispatchEvent(event)
+
+            // ✅ optional feedback
+            alert('Leak added successfully! Previous simulations were removed.')
+
+            onOpenChange(false)
+        } catch (err) {
+            console.error('Failed to add leak:', err)
+            alert('Failed to add leak.')
+        }
+    }
+
+    function getLeakRate(size: typeof leakSize): number {
+        switch (size) {
+            case 'small': return 0.005
+            case 'medium': return 0.08
+            case 'big': return 0.2
+            case 'very_big': return 5.0
+            default: return 0.01
+        }
     }
 
     if (!open || !item) return null
@@ -85,6 +109,8 @@ export default function SideDrawer({
     const isRoad = (obj: any): obj is Road => 'start' in obj && 'end' in obj
     const isJunction = (obj: any): obj is { id: number; coord: [number, number] } =>
         'coord' in obj && !('start' in obj)
+
+    const [leakSize, setLeakSize] = React.useState<'small' | 'medium' | 'big' | 'very_big'>('medium')
 
     return (
         <Box
@@ -184,14 +210,29 @@ export default function SideDrawer({
                                 {typeof item.std_pressure_bar === 'number' && (
                                     <Text><b>Pressure Std Dev:</b> {item.std_pressure_bar.toFixed(3)} bar</Text>
                                 )}
-                                <Button
-                                    mt={3}
-                                    size="sm"
-                                    colorScheme="red"
-                                    onClick={handleAddLeak}
-                                >
-                                    Add Leak
-                                </Button>
+                                <VStack align="stretch" mt={3}>
+                                    <Text fontWeight="semibold" fontSize="sm">Leak Size</Text>
+                                    <NativeSelect.Root size="sm">
+                                        <NativeSelect.Field
+                                            value={leakSize}
+                                            onChange={(e) => setLeakSize(e.target.value as 'small' | 'medium' | 'big' | 'very_big')}
+                                        >
+                                            <option value="small">Small (0.005 kg/s)</option>
+                                            <option value="medium">Medium (0.08 kg/s)</option>
+                                            <option value="big">Big (0.2 kg/s)</option>
+                                            <option value="very_big">Very Big (5.0 kg/s)</option>
+                                        </NativeSelect.Field>
+                                        <NativeSelect.Indicator />
+                                    </NativeSelect.Root>
+
+                                    <Button
+                                        size="sm"
+                                        colorScheme="red"
+                                        onClick={handleAddLeak}
+                                    >
+                                        Add Leak
+                                    </Button>
+                                </VStack>
                             </>
                         )}
                     </>

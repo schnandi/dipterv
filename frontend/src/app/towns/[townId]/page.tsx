@@ -112,7 +112,9 @@ export default function TownDetailPage() {
     const { data: sims, isLoading: simsLoading } = useSWR<SimulationSummary[]>(
         `/simulations/town/${townId}`, (url: string) => api.get(url).then(r => r.data)
     )
-    const sim = sims?.[0] ?? null
+    const sim = sims?.at(-1) ?? null;
+
+    const hasLeakSimulation = sims && sims.length > 1;
 
     // fetch full simulation details
     const { data: simDetail, isLoading: simDetailLoading } = useSWR<SimulationFull>(
@@ -257,6 +259,7 @@ export default function TownDetailPage() {
                         showFlow={showFlow}
                         pipeParameters={simDetail?.details.pipe_parameters}
                         timestamps={simDetail?.details.timestamps}
+                        hasLeakSimulation={hasLeakSimulation}
                     />
                 )}
             </Box>

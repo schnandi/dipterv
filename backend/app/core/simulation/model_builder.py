@@ -1,12 +1,17 @@
+from random import random
+
 import numpy as np
 import pandapipes as pp
 
 
-def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_daily=150.0):
+def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_daily=100.0):
     """
     Build a pandapipes network from the procedural city_data dictionary.
+    Adds leaks as sinks connected through short branch pipes instead of splitting the main one.
+    This way, the number of pipes and their IDs remain stable.
     Returns (net, sink_info)
     """
+
     multipliers = {
         "single_family": 4.0,
         "apartment": 40.0,
@@ -52,7 +57,7 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
             geodata={"x": coord[0], "y": coord[1]},
         )
 
-    # Find main pipes and define ext_grid
+    # Determine ext_grid (highest main junction)
     main_pipe_coords = [tuple(r["start"]) for r in city_data["roads"] if r.get("pipe_type") == "main"] + \
                        [tuple(r["end"]) for r in city_data["roads"] if r.get("pipe_type") == "main"]
     if main_pipe_coords:
@@ -70,52 +75,69 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
     )
 
     # Create pipes
-    pipe_diams = {"main": 0.1, "side": 0.05, "building connection": 0.02}
+    pipe_diams = {"main": 0.1, "side": 0.06, "building connection": 0.03}
     for road in city_data["roads"]:
         start, end = tuple(road["start"]), tuple(road["end"])
         j_from, j_to = junction_coords[start], junction_coords[end]
         ptype = road.get("pipe_type", "side")
         diameter = pipe_diams.get(ptype, 0.05)
-        length = np.linalg.norm(np.array(end) - np.array(start)) / 5000.0
+        length = np.linalg.norm(np.array(end) - np.array(start)) / 3000.0
         age = road.get("age", 50)
-        k_mm = 0.0015 + (0.3 - 0.0015) * (age / 100.0)
+        k_mm = 0.01 + (0.5 - 0.01) * (age / 100.0)
+
         pp.create_pipe_from_parameters(
             net,
+            index=road["id"],  # preserve stable IDs
             from_junction=j_from,
             to_junction=j_to,
             length_km=length,
             diameter_m=diameter,
             k_mm=k_mm,
-            name=f"Pipe {start}->{end}",
-            index=road["id"]
+            name=f"Pipe {road['id']}",
         )
 
-    # Add leaks
-    for leak in city_data.get("leaks", []):
-        lx, ly = leak["leak_junction"]
-        if (lx, ly) not in junction_coords:
-            j_new = len(junction_list)
-            junction_coords[(lx, ly)] = j_new
-            junction_list.append((lx, ly))
-            pp.create_junction(
+        # Add leak as side-branch (short pipe + sink), not as split
+        if "leak" in road:
+            leak = road["leak"]
+            lx, ly = leak["coord"]
+            rate = leak.get("rate_kg_per_s", 0.01)
+            frac = leak.get("fraction", 0.5)
+
+            # interpolate along pipe to find attachment
+            attach_x = start[0] + frac * (end[0] - start[0])
+            attach_y = start[1] + frac * (end[1] - start[1])
+            h_from = avg_heights.get(start, 0.0)
+            h_to = avg_heights.get(end, 0.0)
+            h_leak = h_from * (1 - frac) + h_to * frac
+
+            j_attach = pp.create_junction(
                 net,
-                index=j_new,
                 pn_bar=1.0,
                 tfluid_k=293.15,
-                height_m=avg_heights.get((lx, ly), 0.0),
-                name=f"Leak Junction {(lx, ly)}",
-                geodata={"x": lx, "y": ly}
+                height_m=h_leak,
+                name=f"LeakJunction_{road['id']}",
+                geodata={"x": attach_x, "y": attach_y},
             )
-        else:
-            j_new = junction_coords[(lx, ly)]
 
-        leak_rate = leak.get("rate_kg_per_s", 10.0)
-        pp.create_sink(
-            net,
-            junction=j_new,
-            mdot_kg_per_s=leak_rate,
-            name=f"Leak {leak.get('original_road_id')}"
-        )
+
+            # tiny branch pipe (0.001 km) from mid-point to leak junction
+            branch_idx = pp.create_pipe_from_parameters(
+                net,
+                index=int(1e8 + np.random.randint(0, 1e7)),
+                from_junction=j_attach,
+                to_junction=j_to,
+                length_km=0.001,
+                diameter_m=0.02,
+                k_mm=0.1,
+                name=f"LeakBranch_{road['id']}",
+            )
+            # attach leak sink
+            pp.create_sink(
+                net,
+                junction=j_attach,
+                mdot_kg_per_s=rate,
+                name=f"LeakSink_{road['id']}",
+            )
 
     # Add building sinks
     sink_info = []

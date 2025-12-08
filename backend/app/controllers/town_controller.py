@@ -104,88 +104,77 @@ class TownDetail(Resource):
 
     @ns.doc('delete_town')
     def delete(self, town_id):
-        """Delete a town."""
+        """Delete a town and all its simulations (including baseline)."""
         town = Town.query.get_or_404(town_id)
+
+        from app.models import Simulation
+        sims = Simulation.query.filter_by(town_id=town_id).all()
+        for sim in sims:
+            db.session.delete(sim)
+
         db.session.delete(town)
         db.session.commit()
-        return {'message': 'Town deleted'}
+        return {'message': 'Town and all simulations deleted'}
 
 
 
 @ns.route('/<int:town_id>/roads/<int:road_id>/leak')
 @ns.param('town_id', 'The town identifier')
-@ns.param('road_id', 'The road (pipe) identifier to split')
+@ns.param('road_id', 'The road (pipe) identifier')
 class RoadLeak(Resource):
     @ns.doc('create_pipe_leak')
     @ns.expect(leak_model, validate=True)
     def post(self, town_id, road_id):
         """
-        Split a pipe at the given fraction and mark the split-point as a leak junction.
+        Mark a pipe as having a leak (store position + rate),
+        and invalidate existing simulations for this town.
         """
         payload = request.get_json() or {}
         frac = payload.get('fraction', 0.5)
+        rate = payload.get('rate_kg_per_s', 0.01)
+
         if not (0.0 < frac < 1.0):
             ns.abort(400, "fraction must be between 0 and 1 (exclusive).")
 
-        town = Town.query.get_or_404(town_id, description="Town not found")
+        town = Town.query.get_or_404(town_id)
         data = town.data or {}
-        roads = data.setdefault('roads', [])
-        leaks = data.setdefault('leaks', [])
+        roads = data.get('roads', [])
 
-        # find and remove original road
-        for i, r in enumerate(roads):
-            if r.get('id') == road_id:
-                original = roads.pop(i)
+        for road in roads:
+            if road['id'] == road_id:
+                x1, y1 = road['start']
+                x2, y2 = road['end']
+                lx = x1 + (x2 - x1) * frac
+                ly = y1 + (y2 - y1) * frac
+                road['leak'] = {
+                    'coord': [lx, ly],
+                    'rate_kg_per_s': rate,
+                    'fraction': frac
+                }
                 break
         else:
-            ns.abort(404, f"Road with id {road_id} not found in town {town_id}")
+            ns.abort(404, f"Road {road_id} not found in town {town_id}")
 
-        x1, y1 = original['start']
-        x2, y2 = original['end']
-        # compute leak junction
-        lx = x1 + (x2 - x1) * frac
-        ly = y1 + (y2 - y1) * frac
-        leak_coord = [lx, ly]
+        # ✅ Invalidate only non-baseline simulations
+        from app.models import Simulation  # avoid circular import
+        old_sims = Simulation.query.filter(
+            Simulation.town_id == town_id,
+            Simulation.is_baseline.is_(False)
+        ).all()
+        for sim in old_sims:
+            db.session.delete(sim)
 
-        # generate new unique road IDs
-        existing_ids = {r['id'] for r in roads}
-        max_id = max(existing_ids) if existing_ids else road_id
-        new_id1, new_id2 = max_id + 1, max_id + 2
-
-        # split into two pipes
-        meta = {k: original[k] for k in ('pipe_type','age') if k in original}
-        seg1 = {
-            'id': new_id1,
-            'start': original['start'],
-            'end': leak_coord,
-            **meta
-        }
-        seg2 = {
-            'id': new_id2,
-            'start': leak_coord,
-            'end': original['end'],
-            **meta
-        }
-        roads.extend([seg1, seg2])
-
-        # record leak info for downstream processing
-        leak_entry = {
-            'original_road_id': road_id,
-            'leak_junction': leak_coord,
-            'split_road_ids': [new_id1, new_id2]
-        }
-        leaks.append(leak_entry)
-
-        # save
-        town.data = data
+        # ✅ Persist updated town
         flag_modified(town, 'data')
         db.session.commit()
 
         return {
-            'message': 'Pipe split and leak junction created.',
-            'leak': leak_entry,
-            'new_pipes': [seg1, seg2]
+            'message': 'Leak added successfully. Previous simulations removed.',
+            'road_id': road_id,
+            'leak': road['leak'],
+            'deleted_simulations': len(old_sims)
         }, 200
+
 
 
 @ns.route('/<int:town_id>/data')

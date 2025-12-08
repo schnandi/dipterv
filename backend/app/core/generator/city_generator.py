@@ -5,12 +5,14 @@ from shapely.geometry import LineString
 from .config import CONFIG
 from .districts import DistrictAssigner
 from .roads import RoadSegment, RoadNetwork
-from .buildings import BuildingPlanner
+from .buildings import BuildingPlanner, Building
 from .terrain import TerrainGenerator
 
 
 class CityGenerator:
     def __init__(self, map_size=(2000, 2000), seed=None):
+        Building._id_counter = 0
+        RoadSegment._id_counter = 0
         self.map_size = map_size
         self.seed = seed or random.randint(0, 2**12 - 1)
         np.random.seed(self.seed)

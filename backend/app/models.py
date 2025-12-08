@@ -8,6 +8,12 @@ class Town(db.Model):
     name = db.Column(db.String(255), nullable=True)  # Optional town name
     data = db.Column(db.JSON, nullable=False)  # Full JSON data for the town
 
+    simulations = db.relationship(
+        'Simulation',
+        back_populates='town',
+        cascade='all, delete-orphan'
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -29,8 +35,11 @@ class Simulation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255), nullable=False)
     details = db.Column(db.JSON, nullable=True)  # JSON result from simulation
-    town_id = db.Column(db.Integer, db.ForeignKey('towns.id'), nullable=False)
-    town = db.relationship('Town', backref=db.backref('simulations', lazy=True))
+    town_id = db.Column(db.Integer, db.ForeignKey('towns.id', ondelete='CASCADE'), nullable=False)
+    town = db.relationship('Town', back_populates='simulations')
+
+    is_baseline = db.Column(db.Boolean, default=False)
+    baseline_id = db.Column(db.Integer, db.ForeignKey('simulations.id'), nullable=True)
 
     def to_dict(self):
         return {
