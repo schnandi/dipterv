@@ -78,12 +78,12 @@ export default function SideDrawer({
                 rate_kg_per_s: rate,
             })
 
-            // ✅ trigger UI refresh just like edit save
+            //trigger UI refresh just like edit save
             const event = new CustomEvent('town-updated', { detail: { townId } })
             window.dispatchEvent(event)
 
-            // ✅ optional feedback
-            alert('Leak added successfully! Previous simulations were removed.')
+            //optional feedback
+            alert('Leak added successfully!')
 
             onOpenChange(false)
         } catch (err) {
@@ -149,7 +149,7 @@ export default function SideDrawer({
             <VStack align="stretch" gap="2" fontSize="sm" color="gray.800">
                 {isSim && isSimItem(item) ? (
                     <>
-                        {/* ⏱ Timestamp and main metric */}
+                        {/*Timestamp and main metric */}
                         <Text>
                             <b>Time:</b> {item.timestamp}
                         </Text>
@@ -170,7 +170,7 @@ export default function SideDrawer({
                                     : 'm/s'}
                         </Text>
 
-                        {/* 💧 Building extra info */}
+                        {/*Building extra info */}
                         {item.type === 'building' && (
                             <>
                                 <Text>
@@ -186,7 +186,7 @@ export default function SideDrawer({
                             </>
                         )}
 
-                        {/* 🧮 Pipe extra info */}
+                        {/*Pipe extra info */}
                         {item.type === 'road' && (
                             <>
                                 <Text><b>Flow:</b> {item.flow?.toFixed(6)} kg/s</Text>

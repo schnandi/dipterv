@@ -27,7 +27,7 @@ def main(n_towns: int = 10):
     all_dfs = []
 
     for i in range(n_towns):
-        print(f"🏙️ Generating and simulating town {i+1}/{n_towns}...")
+        print(f"Generating and simulating town {i+1}/{n_towns}...")
 
         town_data, seed = generate_town()
         df = analyze_simulation(town_data, town_id=seed)
@@ -36,8 +36,8 @@ def main(n_towns: int = 10):
     dataset = pd.concat(all_dfs, ignore_index=True)
     dataset.to_csv(OUTPUT_PATH, index=False)
 
-    print(f"✅ Saved dataset to {OUTPUT_PATH.resolve()}")
-    print(f"📊 Total rows: {len(dataset)}, burst ratio: {dataset['burst'].mean():.3f}")
+    print(f"Saved dataset to {OUTPUT_PATH.resolve()}")
+    print(f"Total rows: {len(dataset)}, burst ratio: {dataset['burst'].mean():.3f}")
 
 
 if __name__ == "__main__":

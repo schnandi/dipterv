@@ -44,7 +44,7 @@ def main():
             f"Dataset not found at {DATA_PATH}. Run generate_burst_data.py first."
         )
 
-    print(f"📂 Loading dataset: {DATA_PATH}")
+    print(f"Loading dataset: {DATA_PATH}")
     df = pd.read_csv(DATA_PATH)
 
     # --- Basic sanity checks ---
@@ -68,7 +68,7 @@ def main():
     X_test_scaled = scaler.transform(X_test)
 
     # --- Apply SMOTE to handle imbalance ---
-    print("⚖️ Balancing dataset with SMOTE...")
+    print("Balancing dataset with SMOTE...")
     smote = SMOTE(random_state=42, sampling_strategy=0.3)
     X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
 
@@ -85,7 +85,7 @@ def main():
         n_jobs=-1,
     )
 
-    print("🧠 Training model...")
+    print("Training model...")
     model.fit(X_train_res, y_train_res)
 
     # --- Validation ---
@@ -93,19 +93,19 @@ def main():
     y_prob = model.predict_proba(X_test_scaled)[:, 1]
     auc = roc_auc_score(y_test, y_prob)
 
-    print("\n📊 Classification Report:")
+    print("\nClassification Report:")
     print(classification_report(y_test, y_pred, digits=3))
     print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
-    print(f"🏁 ROC-AUC: {auc:.3f}")
+    print(f"ROC-AUC: {auc:.3f}")
 
     # --- Feature importances ---
-    print("\n📈 Feature Importances:")
+    print("\nFeature Importances:")
     for name, imp in zip(FEATURES, model.feature_importances_):
         print(f"  {name:20s}: {imp:.3f}")
 
     # --- Save model + scaler ---
     joblib.dump({"model": model, "scaler": scaler}, MODEL_PATH)
-    print(f"\n✅ Model + scaler saved to {MODEL_PATH.resolve()}")
+    print(f"\nModel + scaler saved to {MODEL_PATH.resolve()}")
 
 
 if __name__ == "__main__":

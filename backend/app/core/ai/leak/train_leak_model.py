@@ -1,171 +1,188 @@
+# ============================================================
+#   LEAK MODEL V2 — CLASSIFIER + DISTANCE REGRESSOR ENSEMBLE
+# ============================================================
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import xgboost as xgb
 import pickle
+from pathlib import Path
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    mean_squared_error,
+    accuracy_score,
+    roc_auc_score,
+)
+from sklearn.ensemble import GradientBoostingClassifier
+import xgboost as xgb
 
-DATA_PATH = Path("leak_training_data_v2.csv")
 
-MODEL_PATH = Path("leak_distance_xgb_v2data.pkl")
-SCALER_PATH = Path("leak_distance_scaler_v2data.pkl")
-META_PATH = Path("leak_distance_meta_v2data.pkl")
+DATA_PATH = Path("leak_training_data.csv")
+
+MODEL_CLASSIFIER = Path("leak_classifier.pkl")
+MODEL_DISTANCE = Path("leak_distance.pkl")
+SCALER_PATH = Path("leak_scaler.pkl")
+META_PATH = Path("leak_meta.pkl")
 
 
-# ========================================================
-#        TRAIN MODEL FOR ONE TARGET TRANSFORMATION
-# ========================================================
-def train_single_target(df, target_col, feature_cols):
-    print(f"\n📌 Training target: {target_col}")
+# ============================================================
+#              FEATURES USED BY BOTH MODELS
+# ============================================================
 
-    X = df[feature_cols].astype(float)
-    y = df[target_col].astype(float)
+FEATURE_COLS = [
+    # Δ features
+    "delta_mean_flow", "delta_std_flow",
+    "delta_mean_velocity", "delta_std_velocity",
+    "delta_mean_pressure", "delta_std_pressure",
 
-    # Clean NaNs
-    X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    y = y.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    # Neighbour features
+    "neigh_delta_flow", "neigh_delta_pressure",
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.25, random_state=42
+    # Pipe metadata
+    "pipe_length", "pipe_age",
+    "type_main", "type_branch",
+
+    # Coordinates
+    "pipe_x", "pipe_y",
+
+    # Graph metrics
+    "graph_distance", "hydraulic_distance",
+]
+
+
+# ============================================================
+#                      LOAD DATASET
+# ============================================================
+def load_dataset():
+    df = pd.read_csv(DATA_PATH)
+
+    # Drop split-pipes (id > 1e8)
+    df = df[df["pipe_id"] < 1e8].copy()
+
+    # Create classification label
+    df["is_leak_pipe"] = (df["pipe_id"] == df["leak_pipe_id"]).astype(int)
+
+    # Clean
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    return df
+
+
+# ============================================================
+#                  TRAIN CLASSIFIER
+# ============================================================
+def train_classifier(df, X_train, X_test, y_train, y_test):
+
+    print("Training classifier...")
+
+    clf = GradientBoostingClassifier(
+        n_estimators=400,
+        learning_rate=0.05,
+        max_depth=4,
+        subsample=0.9,
+    )
+
+    clf.fit(X_train, y_train)
+
+    preds = clf.predict(X_test)
+    proba = clf.predict_proba(X_test)[:, 1]
+
+    acc = accuracy_score(y_test, preds)
+    auc = roc_auc_score(y_test, proba)
+
+    print(f"   Accuracy = {acc:.3f}")
+    print(f"   ROC AUC = {auc:.3f}")
+
+    return clf
+
+
+# ============================================================
+#               TRAIN DISTANCE REGRESSOR (log)
+# ============================================================
+def train_distance_regressor(X_train, X_test, y_train, y_test):
+
+    print("Training distance regressor...")
+
+    model = xgb.XGBRegressor(
+        n_estimators=1200,
+        max_depth=10,
+        learning_rate=0.02,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        reg_lambda=1.1,
+        objective="reg:squarederror",
+        tree_method="hist",
+    )
+
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=[(X_test, y_test)],
+        verbose=False,
+        early_stopping_rounds=60,
+    )
+
+    pred = model.predict(X_test)
+
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    print(f"   Distance RMSE = {rmse:.3f}")
+
+    return model
+
+
+# ============================================================
+#                       MAIN TRAIN
+# ============================================================
+def main():
+
+    print(f"Loading dataset: {DATA_PATH}")
+    df = load_dataset()
+
+    # ------------------------------
+    # Select features + targets
+    # ------------------------------
+    X = df[FEATURE_COLS].astype(float)
+    y_class = df["is_leak_pipe"].astype(int)
+    y_dist = df["distance_log"].astype(float)
+
+    # ------------------------------
+    # Scaling
+    # ------------------------------
+    X_train, X_test, yC_train, yC_test, yD_train, yD_test = train_test_split(
+        X, y_class, y_dist, test_size=0.25, random_state=42
     )
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    model = xgb.XGBRegressor(
-        n_estimators=1500,
-        max_depth=10,
-        learning_rate=0.02,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        reg_lambda=1.2,
-        objective="reg:squarederror",
-        tree_method="hist",
-    )
+    # ------------------------------
+    # Train models
+    # ------------------------------
+    clf = train_classifier(df, X_train_scaled, X_test_scaled, yC_train, yC_test)
+    dist_model = train_distance_regressor(X_train_scaled, X_test_scaled, yD_train, yD_test)
 
-    model.fit(
-        X_train_scaled,
-        y_train,
-        eval_set=[(X_test_scaled, y_test)],
-        verbose=False,
-        early_stopping_rounds=80,
-    )
+    # ------------------------------
+    # Save everything
+    # ------------------------------
+    print("\nSaving V2 ensemble models...")
+    with open(MODEL_CLASSIFIER, "wb") as f:
+        pickle.dump(clf, f)
 
-    y_pred = model.predict(X_test_scaled)
-
-    mse = mean_squared_error(y_test, y_pred)
-    rmse = np.sqrt(mse)
-    mae = mean_absolute_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-
-    return {
-        "model": model,
-        "scaler": scaler,
-        "rmse": rmse,
-        "mae": mae,
-        "r2": r2,
-        "target": target_col,
-    }
-
-
-# ========================================================
-#                MAIN TRAINING FUNCTION
-# ========================================================
-def train_distance_model():
-    print("📥 Loading dataset:", DATA_PATH)
-    df = pd.read_csv(DATA_PATH)
-
-    # ----------------------------------------------------
-    # Feature columns — ALL engineered features
-    # ----------------------------------------------------
-    feature_cols = [
-        # Δ features
-        "delta_mean_flow", "delta_std_flow",
-        "delta_mean_velocity", "delta_std_velocity",
-        "delta_mean_pressure", "delta_std_pressure",
-
-        # Neighbour features
-        "neigh_delta_flow", "neigh_delta_pressure",
-
-        # Pipe metadata
-        "pipe_length", "pipe_age",
-        "type_main", "type_branch",
-
-        # Coordinates
-        "pipe_x", "pipe_y",
-
-        # Graph distances
-        "graph_distance", "hydraulic_distance",
-    ]
-
-    # Ensure missing columns are zero-filled
-    for col in feature_cols:
-        if col not in df:
-            print(f"⚠ Missing column in dataset: {col} — filling with zeros")
-            df[col] = 0.0
-
-    print(f"📊 Using {len(feature_cols)} input features")
-
-    # ----------------------------------------------------
-    # Try different target formulations
-    # ----------------------------------------------------
-    target_candidates = {
-        "distance_to_leak": lambda x: x,
-        "distance_log": np.expm1,     # inverse transform
-        "distance_sqrt": lambda x: x**2,
-    }
-
-    results = {}
-
-    for target_col in target_candidates.keys():
-        if target_col not in df.columns:
-            print(f"⚠ Target missing: {target_col}, skipping.")
-            continue
-
-        results[target_col] = train_single_target(df, target_col, feature_cols)
-
-    # ----------------------------------------------------
-    # Pick the best model (lowest RMSE)
-    # ----------------------------------------------------
-    best_key = min(results.keys(), key=lambda k: results[k]["rmse"])
-    best = results[best_key]
-
-    print("\n================ BEST MODEL SELECTED ================")
-    print(f"🎯 Best target: {best['target']}")
-    print(f"MAE  = {best['mae']:.4f}")
-    print(f"RMSE = {best['rmse']:.4f}")
-    print(f"R²   = {best['r2']:.4f}")
-    print("=====================================================\n")
-
-    # ----------------------------------------------------
-    # Save model, scaler, metadata
-    # ----------------------------------------------------
-    with open(MODEL_PATH, "wb") as f:
-        pickle.dump(best["model"], f)
+    with open(MODEL_DISTANCE, "wb") as f:
+        pickle.dump(dist_model, f)
 
     with open(SCALER_PATH, "wb") as f:
-        pickle.dump(best["scaler"], f)
+        pickle.dump(scaler, f)
 
     with open(META_PATH, "wb") as f:
         pickle.dump({
-            "target": best["target"],
-            "feature_cols": feature_cols,
-            "inverse_transform": target_candidates[best["target"]],
+            "features": FEATURE_COLS,
+            "distance_target": "distance_log",
         }, f)
 
-    print(f"💾 Model saved to: {MODEL_PATH}")
-    print(f"💾 Scaler saved to: {SCALER_PATH}")
-    print(f"💾 Metadata saved to: {META_PATH}")
-
-
-# ========================================================
-#                       MAIN
-# ========================================================
-def main():
-    train_distance_model()
+    print("Done!")
+    print("================================================")
 
 
 if __name__ == "__main__":

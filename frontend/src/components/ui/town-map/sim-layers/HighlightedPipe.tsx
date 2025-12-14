@@ -18,7 +18,7 @@ export function HighlightedPipe({
                 if (next <= 0.2 || next >= 1) dir *= -1;
                 return Math.max(0.2, Math.min(1, next));
             });
-        }, 50);
+        }, 200);
 
         return () => clearInterval(id);
     }, []);

@@ -14,6 +14,7 @@ class CityGenerator:
         Building._id_counter = 0
         RoadSegment._id_counter = 0
         self.map_size = map_size
+        print(seed)
         self.seed = seed or random.randint(0, 2**12 - 1)
         np.random.seed(self.seed)
         self.network = RoadNetwork()

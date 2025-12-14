@@ -108,10 +108,29 @@ class TownDetail(Resource):
         town = Town.query.get_or_404(town_id)
 
         from app.models import Simulation
-        sims = Simulation.query.filter_by(town_id=town_id).all()
-        for sim in sims:
+        # 1. Delete derived simulations FIRST
+        derived = Simulation.query.filter(
+            Simulation.town_id == town_id,
+            Simulation.baseline_id.isnot(None)
+        ).all()
+
+        for sim in derived:
             db.session.delete(sim)
 
+        db.session.flush()  # force order
+
+        # 2. Delete baseline simulations
+        baselines = Simulation.query.filter(
+            Simulation.town_id == town_id,
+            Simulation.is_baseline.is_(True)
+        ).all()
+
+        for sim in baselines:
+            db.session.delete(sim)
+
+        db.session.flush()
+
+        # 3. Delete town
         db.session.delete(town)
         db.session.commit()
         return {'message': 'Town and all simulations deleted'}
@@ -155,7 +174,7 @@ class RoadLeak(Resource):
         else:
             ns.abort(404, f"Road {road_id} not found in town {town_id}")
 
-        # ✅ Invalidate only non-baseline simulations
+        #Invalidate only non-baseline simulations
         from app.models import Simulation  # avoid circular import
         old_sims = Simulation.query.filter(
             Simulation.town_id == town_id,
@@ -164,7 +183,7 @@ class RoadLeak(Resource):
         for sim in old_sims:
             db.session.delete(sim)
 
-        # ✅ Persist updated town
+        #Persist updated town
         flag_modified(town, 'data')
         db.session.commit()
 
@@ -204,14 +223,27 @@ class TownDataUpdate(Resource):
         town.data = data
         flag_modified(town, "data")
 
-        # Delete any existing simulations for this town
-        old_sims = Simulation.query.filter_by(town_id=town_id).all()
-        for sim in old_sims:
+        # Delete non-baseline simulations first
+        derived_sims = Simulation.query.filter(
+            Simulation.town_id == town_id,
+            Simulation.is_baseline.is_(False)
+        ).all()
+
+        for sim in derived_sims:
+            db.session.delete(sim)
+
+        # Then delete baseline simulations
+        baseline_sims = Simulation.query.filter(
+            Simulation.town_id == town_id,
+            Simulation.is_baseline.is_(True)
+        ).all()
+
+        for sim in baseline_sims:
             db.session.delete(sim)
 
         db.session.commit()
 
         return {
             "message": "Town data updated successfully. Existing simulations removed.",
-            "deleted_simulations": len(old_sims)
+            "deleted_simulations": len(derived_sims) + len(baseline_sims)
         }, 200

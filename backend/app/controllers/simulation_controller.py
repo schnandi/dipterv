@@ -50,7 +50,10 @@ class SimulationList(Resource):
         except Exception as e:
             ns.abort(500, f"Simulation failed: {str(e)}")
 
-        # ✅ Check if this town already has a baseline
+        from app.utils.json_cleaner import clean_json
+        cleaned_result = clean_json(result)
+
+        # Check if this town already has a baseline
         existing_baseline = Simulation.query.filter_by(town_id=town_id, is_baseline=True).first()
 
         if existing_baseline is None:
@@ -58,7 +61,7 @@ class SimulationList(Resource):
             sim = Simulation(
                 title=f"Baseline Simulation for {town.name or f'Town {town_id}'}",
                 town_id=town_id,
-                details=result,
+                details=cleaned_result,
                 is_baseline=True,
             )
         else:
@@ -66,7 +69,7 @@ class SimulationList(Resource):
             sim = Simulation(
                 title=title,
                 town_id=town_id,
-                details=result,
+                details=cleaned_result,
                 is_baseline=False,
                 baseline_id=existing_baseline.id,
             )

@@ -155,27 +155,23 @@ export default function TownCanvas({
         originalCorners: [number, number][]
     } | null>(null)
 
-    const [leakDataV1, setLeakDataV1] = useState<LeakRiskResponse | null>(null);
-    const [leakDataV2, setLeakDataV2] = useState<LeakRiskResponse | null>(null);
+    const [leakData, setLeakData] = useState<LeakRiskResponse | null>(null);
 
     useEffect(() => {
         async function loadBoth() {
             const id = Number(window.location.pathname.split("/").pop());
 
-            const [v1, v2] = await Promise.all([
+            const [leak] = await Promise.all([
                 api.get(`/leak-risk/${id}`).catch(() => null),
-                api.get(`/leak-risk/v2/${id}`).catch(() => null),
             ]);
 
-            if (v1?.data) setLeakDataV1(v1.data);
-            if (v2?.data) setLeakDataV2(v2.data);
+            if (leak?.data) setLeakData(leak.data);
         }
 
         if (mode === "simulate" && hasLeakSimulation) {
             loadBoth();
         } else {
-            setLeakDataV1(null);
-            setLeakDataV2(null);
+            setLeakData(null);
         }
     }, [mode, hasLeakSimulation]);
 
@@ -190,9 +186,9 @@ export default function TownCanvas({
     const drawerItem = useMemo(() => {
         if (!selected) return null
 
-        // 🧮 Simulate mode: live values
+        //Simulate mode: live values
         if (mode === 'simulate' && frame != null) {
-            // ⚙️ Just extract timestamp array if available (we assume all have same length)
+            // Just extract timestamp array if available (we assume all have same length)
             const tsArray =
                 pipeVelocities?.[Object.keys(pipeVelocities)[0]] ??
                 sinkFlows?.[Object.keys(sinkFlows)[0]] ??
@@ -203,7 +199,7 @@ export default function TownCanvas({
             if (selected.type === 'road') {
                 const vel = pipeVelocities?.[`v_mean_pipe_${selected.id}`]?.[frame] ?? 0
                 const flow = pipeFlows?.[`flow_pipe_${selected.id}`]?.[frame] ?? 0
-                const staticInfo = pipeParameters?.[selected.id] || {}   // ✅ restore static data
+                const staticInfo = pipeParameters?.[selected.id] || {}
                 const geo = draftPipes.find(r => r.id === selected.id) || {}
                 return {
                     type: 'road',
@@ -455,10 +451,39 @@ export default function TownCanvas({
         isDraggingBuilding.current = false;
     }
 
+    function bakeRotationIntoCorners(b: {
+        corners: [number, number][]
+        center: [number, number]
+        rotation?: number
+    }) {
+        const angleDeg = b.rotation ?? 0
+        if (Math.abs(angleDeg) < 1e-6) return b
+
+        const angle = (angleDeg * Math.PI) / 180
+        const cos = Math.cos(angle)
+        const sin = Math.sin(angle)
+        const [cx, cy] = b.center
+
+        const newCorners = b.corners.map(([x, y]) => {
+            const dx = x - cx
+            const dy = y - cy
+            return [
+                cx + dx * cos - dy * sin,
+                cy + dx * sin + dy * cos,
+            ] as [number, number]
+        })
+
+        return {
+            ...b,
+            corners: newCorners,
+            rotation: 0,
+        }
+    }
+
+
     function validateAndCleanTownData(data: { junctions: any[]; roads: any[]; buildings: any[] }) {
         const eps = 1e-3;
 
-        // 🔹 Helper: round coordinates to nearest 0.001 to prevent float mismatches
         const roundCoord = (pt: [number, number]): [number, number] => [
             Number(pt[0].toFixed(3)),
             Number(pt[1].toFixed(3)),
@@ -581,7 +606,7 @@ export default function TownCanvas({
                 ref={stageRef}
                 width={window.innerWidth}
                 height={window.innerHeight}
-                draggable={isPanning && !isDraggingBuilding.current} // 🚫 stage can't move when building dragging
+                draggable={isPanning && !isDraggingBuilding.current} //stage can't move when building dragging
                 onWheel={handleWheel}
                 onMouseDown={(e) => {
                     const stage = e.target.getStage();
@@ -611,7 +636,7 @@ export default function TownCanvas({
                     }
                 }}
                 onDragEnd={(e) => {
-                    // ✅ Only update pos if we were panning
+                    //Only update pos if we were panning
                     if (isPanning && !isDraggingBuilding.current) {
                         const newPos = e.target.position();
                         setPos({ x: newPos.x, y: newPos.y });
@@ -628,8 +653,8 @@ export default function TownCanvas({
                     const worldX = (pointer.x - stagePos.x) / scale;
                     const worldY = (pointer.y - stagePos.y) / scale;
 
-                    // ✅ handle resize globally
-                    // ✅ handle resize globally
+                    //handle resize globally
+                    //handle resize globally
                     if (activeResize) {
                         const { bId, cornerIdx } = activeResize;
                         const b = draftBuildings.find(b => b.id === bId);
@@ -753,25 +778,15 @@ export default function TownCanvas({
                     />
                 </Layer>
                 <Layer listening={false}>
-                    {/* V1 model (current one, red/blue/orange) */}
-                    {mode === "simulate" && hasLeakSimulation && leakDataV1 && (
-                        <LeakRegionLayer
-                            bestCircle={leakDataV1.best_circle}
-                            triangulated={leakDataV1.triangulated}
-                            showSupporting={true}
-                        />
-                    )}
-
-                    {/* V2 model (we render it in PURPLE so you can compare) */}
-                    {mode === "simulate" && hasLeakSimulation && leakDataV2 && (
+                    {mode === "simulate" && hasLeakSimulation && leakData && (
                         <LeakRegionLayer
                             bestCircle={{
-                                ...leakDataV2.best_circle,
-                                colorOverride: "purple",   // NEW
+                                ...leakData.best_circle,
+                                colorOverride: "purple",
                             } as any}
                             triangulated={{
-                                ...leakDataV2.triangulated,
-                                colorOverride: "purple",   // NEW
+                                ...leakData.triangulated,
+                                colorOverride: "purple",
                             } as any}
                             showSupporting={true}
                         />
@@ -848,7 +863,7 @@ export default function TownCanvas({
 
                             const cleaned = validateAndCleanTownData({
                                 roads: draftPipes,
-                                buildings: draftBuildings,
+                                buildings: draftBuildings.map(b => bakeRotationIntoCorners(b)),
                                 junctions: draftJunctions,
                             });
 
@@ -859,7 +874,7 @@ export default function TownCanvas({
                             const event = new CustomEvent('town-updated', { detail: { townId } });
                             window.dispatchEvent(event);
                         } catch (err) {
-                            console.error('❌ Failed to save town:', err);
+                            console.error('Failed to save town:', err);
                             alert('Failed to save town data.');
                         }
                     }}
@@ -948,7 +963,7 @@ export default function TownCanvas({
 
                                 const updated = { ...b, ...values };
 
-                                // 🧮 Automatically recalc district if building_type changes
+                                //Automatically recalc district if building_type changes
                                 if ('building_type' in values && values.building_type) {
                                     const newDistrict = getDistrictForType(values.building_type);
                                     return { ...updated, district: newDistrict };

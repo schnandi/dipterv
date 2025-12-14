@@ -5,7 +5,7 @@ import numpy as np
 from copy import deepcopy
 from math import sqrt
 from collections import defaultdict
-import networkx as nx   # ✔ graph distance
+import networkx as nx   #graph distance
 
 from app.core.generator.city_generator import CityGenerator
 from app.core.simulation.runner import run_simulation
@@ -26,26 +26,24 @@ def generate_town(seed=None):
 
 
 # ============================================================
-# Helper: leak injection (with bigger range)
+# Helper: leak injection on a specific pipe
 # ============================================================
-def inject_random_leak(city_data, leak_rate_range=(0.05, 0.20)):
-    roads = city_data["roads"]
-
-    candidates = [
-        r for r in roads
-        if r["pipe_type"] != "building connection" and r["id"] < 1e8
-    ]
-    selected = random.choice(candidates)
-
+def inject_leak_on_pipe(city_data, pipe, leak_rate_range=(0.05, 0.20)):
+    """
+    Inject a leak on a GIVEN pipe (dict from city_data["roads"]).
+    Returns:
+        leaky_city_data, leak_pipe_id, (leak_x, leak_y), leak_rate, leak_fraction
+    """
     frac = random.uniform(0.05, 0.95)
     rate = random.uniform(*leak_rate_range)
 
     leaky = deepcopy(city_data)
 
     leak_x = leak_y = None
+    leak_pipe_id = pipe["id"]
 
     for r in leaky["roads"]:
-        if r["id"] == selected["id"]:
+        if r["id"] == leak_pipe_id:
             x1, y1 = r["start"]
             x2, y2 = r["end"]
             leak_x = x1 + (x2 - x1) * frac
@@ -56,8 +54,9 @@ def inject_random_leak(city_data, leak_rate_range=(0.05, 0.20)):
                 "rate_kg_per_s": rate,
                 "fraction": frac,
             }
+            break
 
-    return leaky, selected["id"], (leak_x, leak_y)
+    return leaky, leak_pipe_id, (leak_x, leak_y), rate, frac
 
 
 # ============================================================
@@ -73,6 +72,7 @@ def midpoint(a, b):
 def build_graph(roads):
     G = nx.Graph()
     for r in roads:
+        # skip leak branch pipes etc.
         if r["id"] >= 1e8:
             continue
 
@@ -157,27 +157,46 @@ def compute_neighbour_stats(df, city_data):
 
 
 # ============================================================
-# Generate data for one town
+# Generate data for one town (V2)
 # ============================================================
-def generate_for_one_town(city_data, town_seed, n_leaks=3):
+def generate_for_one_town_v2(city_data, town_seed, max_leaks_per_town=8):
+    """
+    V2: one baseline + multiple DISTINCT leak pipes per town.
+    """
     rows = []
 
-    print(f"▶ Baseline simulation for town {town_seed}")
+    print(f"Baseline simulation for town {town_seed}")
     baseline = run_simulation(city_data)
 
     G = build_graph(city_data["roads"])
 
-    for li in range(n_leaks):
-        print(f"   → Leak {li+1}/{n_leaks}")
+    # ---- Choose candidate pipes for leaks (no building connections, no synthetic IDs)
+    candidates = [
+        r for r in city_data["roads"]
+        if r.get("pipe_type") != "building connection" and r["id"] < 1e8
+    ]
+    if not candidates:
+        print(f"No valid leak candidates in town {town_seed}, skipping.")
+        return pd.DataFrame()
 
-        leaky_data, leak_pid, (lx, ly) = inject_random_leak(city_data)
+    # Shuffle & pick distinct pipes
+    random.shuffle(candidates)
+    selected_pipes = candidates[:max_leaks_per_town]
+
+    for li, pipe in enumerate(selected_pipes):
+        print(f"   → Leak {li+1}/{len(selected_pipes)} on pipe {pipe['id']}")
+
+        leaky_data, leak_pid, (lx, ly), leak_rate, leak_frac = inject_leak_on_pipe(city_data, pipe)
         leaky = run_simulation(leaky_data)
 
         df = compute_pipe_deltas(baseline, leaky)
+        # ignore synthetic huge IDs (e.g. leak branches)
         df = df[df["pipe_id"] < 1e8].copy()
+        if df.empty:
+            continue
 
         # ----------------------------------------
-        # Compute spatial distance
+        # Spatial distance from pipe center to leak
         # ----------------------------------------
         pipe_lookup = {r["id"]: r for r in city_data["roads"]}
 
@@ -204,12 +223,10 @@ def generate_for_one_town(city_data, town_seed, n_leaks=3):
         df["distance_log"] = np.log1p(df["distance_to_leak"])
 
         # ----------------------------------------
-        # Graph/hydraulic distance
+        # Graph / hydraulic distances
         # ----------------------------------------
         graph_dists = []
         hydraulic_dists = []
-
-        leak_pt = (lx, ly)
 
         # find closest junction to leak
         leak_node = min(G.nodes, key=lambda n: (n[0]-lx)**2 + (n[1]-ly)**2)
@@ -250,8 +267,8 @@ def generate_for_one_town(city_data, town_seed, n_leaks=3):
             L = sqrt((r["start"][0]-r["end"][0])**2 + (r["start"][1]-r["end"][1])**2)
             lengths.append(L)
             ages.append(r.get("age", 0))
-            main.append(1 if r["pipe_type"] == "main" else 0)
-            branch.append(1 if r["pipe_type"] == "branch" else 0)
+            main.append(1 if r.get("pipe_type") == "main" else 0)
+            branch.append(1 if r.get("pipe_type") == "branch" else 0)
 
         df["pipe_length"] = lengths
         df["pipe_age"] = ages
@@ -263,37 +280,55 @@ def generate_for_one_town(city_data, town_seed, n_leaks=3):
         # ----------------------------------------
         df = compute_neighbour_stats(df, city_data)
 
-        # Metadata
+        # Metadata: leak info & town info (for analysis/debug)
         df["leak_x"] = lx
         df["leak_y"] = ly
         df["leak_pipe_id"] = leak_pid
+        df["leak_rate_kg_per_s"] = leak_rate
+        df["leak_fraction"] = leak_frac
         df["town_seed"] = town_seed
-        df["scenario"] = f"{town_seed}_{li}"
+        df["scenario"] = f"{town_seed}_pipe{leak_pid}_#{li}"
 
         rows.append(df)
+
+    if not rows:
+        return pd.DataFrame()
 
     return pd.concat(rows, ignore_index=True)
 
 
 # ============================================================
-# Main
+# Main (V2 with per-town incremental save)
 # ============================================================
-def main(n_towns=200, n_leaks_per_town=3):
-    all_rows = []
+def main(n_towns=120, max_leaks_per_town=8):
+    """
+    V2 dataset:
+      - Writes dataset incrementally after each town
+      - Safe against crashes / long runtimes
+    """
+    first_write = not OUTPUT_PATH.exists()
 
     for i in range(n_towns):
-        print(f"\n🏙 Generating town {i+1}/{n_towns}")
+        print(f"\nGenerating town {i+1}/{n_towns}")
         city_data, seed = generate_town()
 
-        df_town = generate_for_one_town(city_data, seed, n_leaks_per_town)
-        all_rows.append(df_town)
+        df_town = generate_for_one_town_v2(city_data, seed, max_leaks_per_town)
 
-    dataset = pd.concat(all_rows, ignore_index=True)
-    dataset.to_csv(OUTPUT_PATH, index=False)
+        if df_town is None or df_town.empty:
+            print(f"Town {seed} produced no rows, skipping save.")
+            continue
+
+        # Write this town's data safely
+        if first_write:
+            df_town.to_csv(OUTPUT_PATH, index=False, mode="w", header=True)
+            first_write = False
+            print(f"Wrote first town rows → {OUTPUT_PATH}")
+        else:
+            df_town.to_csv(OUTPUT_PATH, index=False, mode="a", header=False)
+            print(f"Appended town {seed} rows to → {OUTPUT_PATH}")
 
     print("\n====================================")
-    print(f"✅ Saved leak dataset to {OUTPUT_PATH.resolve()}")
-    print(f"📊 Total rows: {len(dataset)}")
+    print(f"Incremental dataset saved to: {OUTPUT_PATH.resolve()}")
     print("====================================")
 
 

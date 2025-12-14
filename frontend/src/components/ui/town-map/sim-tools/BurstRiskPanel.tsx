@@ -108,7 +108,7 @@ export default function BurstRiskPanel({ townId, onSelectPipe }: Props) {
             position="fixed"
             left="20px"
             top="200px"
-            bg="bg.surface"
+            bg="white"
             p="3"
             borderRadius="2xl"
             boxShadow="lg"
@@ -118,7 +118,7 @@ export default function BurstRiskPanel({ townId, onSelectPipe }: Props) {
             overflowY="auto"
         >
             <VStack align="stretch" gap="6">
-                {/* 🧠 General Burst Risk Section */}
+                {/*General Burst Risk Section */}
                 <Box>
                     <HStack justify="space-between">
                         <HStack gap="2">
@@ -158,7 +158,7 @@ export default function BurstRiskPanel({ townId, onSelectPipe }: Props) {
                     )}
                 </Box>
 
-                {/* ⚠️ Concerning Young Pipes Section */}
+                {/* Concerning Young Pipes Section */}
                 <Box>
                     <HStack justify="space-between">
                         <HStack gap="2">

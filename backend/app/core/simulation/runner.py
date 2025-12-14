@@ -19,18 +19,19 @@ def run_simulation(city_data, n_steps=96):
     building_sink_indices = []
     profiles = {}
 
-    for sink_idx, sink_row in net.sink.iterrows():
-        name = sink_row["name"]
-        if name.startswith("Sink "):   # Building sinks only
-            b_id = int(name.split()[1])
-            # Find sink info
-            for (orig_b_id, btype, nominal) in sink_info:
-                if orig_b_id == b_id:
-                    prof = get_profile(btype, t_daily)
-                    scale = nominal / np.mean(prof)
-                    profiles[str(sink_idx)] = prof * scale
-                    building_sink_indices.append(sink_idx)
-                    break
+    for info in sink_info:
+        sink_idx = info["sink_index"]
+        btype = info["building_type"]
+        nominal = info["nominal_kg_s"]
+
+        # Generate base consumption profile
+        prof = get_profile(btype, t_daily)
+
+        # Scale to nominal mass flow
+        scale = nominal / np.mean(prof)
+        profiles[str(sink_idx)] = prof * scale
+
+        building_sink_indices.append(sink_idx)
 
     df_profiles = pd.DataFrame(profiles)
     ds = DFData(df_profiles)

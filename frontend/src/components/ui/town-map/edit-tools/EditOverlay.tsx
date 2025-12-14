@@ -66,7 +66,7 @@ export default function EditOverlay({
 
     const generateId = () => Date.now() + Math.floor(Math.random() * 100000);
 
-    /** 🔍 Find nearest junction or pipe projection */
+    /**Find nearest junction or pipe projection */
     const findSnapTarget = (
         x: number,
         y: number
@@ -115,7 +115,7 @@ export default function EditOverlay({
         const x = (pointer.x - stage.x()) / stage.scaleX()
         const y = (pointer.y - stage.y()) / stage.scaleY()
 
-        /** 🏠 Add Building */
+        /**Add Building */
         if (tool === 'addBuilding') {
             const { size, rotation, buildingType } = buildingConfig
             const district = getDistrictForType(buildingType)
@@ -193,7 +193,7 @@ export default function EditOverlay({
             return;
         }
 
-        /** ➕ Add Pipe */
+        /**Add Pipe */
         if (tool === 'addPipe') {
             const snap = findSnapTarget(x, y);
 

@@ -87,7 +87,7 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
 
         pp.create_pipe_from_parameters(
             net,
-            index=road["id"],  # preserve stable IDs
+            index=road["id"],
             from_junction=j_from,
             to_junction=j_to,
             length_km=length,
@@ -136,6 +136,7 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
                 net,
                 junction=j_attach,
                 mdot_kg_per_s=rate,
+                index=int(1e8 + np.random.randint(0, 1e7)),
                 name=f"LeakSink_{road['id']}",
             )
 
@@ -159,8 +160,13 @@ def build_network(city_data, height_scale=1.0, base_pressure=10.0, baseline_dail
 
         nominal_daily_L = baseline_daily * multipliers.get(btype, 1.0)
         nominal_kg_s = nominal_daily_L / 86400.0
-        pp.create_sink(net, junction=j_idx, mdot_kg_per_s=nominal_kg_s,
-                       name=f"Sink {b['id']}")
-        sink_info.append((b["id"], btype, nominal_kg_s))
+        sink_idx = pp.create_sink(net, junction=j_idx, mdot_kg_per_s=nominal_kg_s,
+                       name=f"Sink {b['id']}", index=b['id'])
+        sink_info.append({
+            "building_id": b["id"],
+            "building_type": btype,
+            "nominal_kg_s": nominal_kg_s,
+            "sink_index": sink_idx,
+        })
 
     return net, sink_info

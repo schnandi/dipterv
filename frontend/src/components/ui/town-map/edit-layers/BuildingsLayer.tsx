@@ -72,7 +72,7 @@ export function BuildingsLayer({
                             ? '#F28B82'
                             : '#BDBDBD'
 
-                // ✅ Points relative to center (for Konva group rotation)
+                //Points relative to center (for Konva group rotation)
                 const localPoints = b.corners
                     .map(([x, y]) => [x - b.center[0], y - b.center[1]])
                     .flat()

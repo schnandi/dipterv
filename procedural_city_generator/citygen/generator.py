@@ -2,33 +2,19 @@ import numpy as np
 import heapq  # Priority queue for procedural generation
 import json
 from shapely.geometry import LineString, Point, Polygon
-from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
-from noise import pnoise2
+from perlin_noise import PerlinNoise
 import math
 import random  # for generating a random seed if none provided
 import sys
 
 # -------------------------- CONFIGURATION --------------------------
-CONFIG = {
-    "num_highways": 5,                    # Number of main (previously highway) roads to generate
-    "highway_min_length": 150,            # Minimum length for a main road segment
-    "highway_max_length": 350,            # Maximum length for a main road segment
-    "side_road_min_length": 100,          # Minimum length for a side road segment
-    "side_road_max_length": 150,          # Maximum length for a side road segment
-    "highway_branch_angle_range": (-30, 30),  # Range (in degrees) for main road extension rotation
-    "side_road_branch_variation": (-5, 5),    # Variation (in degrees) added to perpendicular branches
-    "branch_probability": 0.7,            # Chance that a branch (side road) is created
-    "max_iterations": 200,                # Maximum iterations in the generation loop
-    "intersection_snap_distance": 100,    # Snap distance for non-main roads
-    "highway_snap_distance": 1,           # Snap distance for main roads
-
-    # Terrain / Height Map parameters:
-    "height_noise_scale": 1000,           # Larger scale => smoother, broader height changes
-    "height_octaves": 2,                  # Number of octaves for Perlin noise
-    "height_amplitude": 100,              # Overall vertical range of heights
-    "min_intersection_separation": 5.0,   # Minimum distance between intersection points
-}
+CONFIG = {"num_highways": 5, "highway_min_length": 150, "highway_max_length": 350, "side_road_min_length": 100,
+          "side_road_max_length": 150, "highway_branch_angle_range": (-30, 30), "side_road_branch_variation": (-5, 5),
+          "branch_probability": 0.7, "max_iterations": 200, "intersection_snap_distance": 100,
+          "highway_snap_distance": 1, "height_noise_scale": 1000, "height_octaves": 6, "height_persistence": 0.5,
+          "height_lacunarity": 2.0, "height_amplitude": 100, "min_intersection_separation": 5.0, "height_curve_exponent": 1.5,
+          "height_map_resolution": (256, 256)}
 # --------------------------------------------------------------------
 
 class RoadSegment:
@@ -94,18 +80,25 @@ class CityGenerator:
         self.buildings = []
         self.priority_queue = []
         self.intersection_count = {}  # Track how many roads connect at each coordinate
+        self.height_noise = PerlinNoise(octaves=CONFIG["height_octaves"], seed=seed)
 
     def _get_terrain_height(self, x, y):
         """
-        Compute terrain height at (x, y) using Perlin noise.
-        Scale and amplitude come from CONFIG.
+        Compute height via PerlinNoise (replacement for pnoise2).
         """
-        scale = CONFIG["height_noise_scale"]
-        octaves = CONFIG["height_octaves"]
-        amplitude = CONFIG["height_amplitude"]
-        # Perlin noise returns ~[-1..1], so shift to [0..1], then multiply by amplitude
-        noise_val = pnoise2(x / scale, y / scale, octaves=octaves, base=self.seed)
-        return (noise_val + 1) / 2 * amplitude
+        noise_val = self.height_noise([
+            x / CONFIG["height_noise_scale"],
+            y / CONFIG["height_noise_scale"]
+        ])
+
+        # normalize to [0,1]
+        h = (noise_val + 1) * 0.5
+
+        # bias towards low-elevation
+        exp = CONFIG["height_curve_exponent"]
+        h = h ** exp
+
+        return h * CONFIG["height_amplitude"]
 
     def _add_segment(self, segment):
         """Add a road segment to the network, tracking intersections."""

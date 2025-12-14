@@ -137,7 +137,7 @@ export default function TownDetailPage() {
     React.useEffect(() => {
         const handleTownUpdated = (e: CustomEvent) => {
             if (String(e.detail.townId) === String(townId)) {
-                // 🧹 Clear simulation list + detail from cache
+                //Clear simulation list + detail from cache
                 mutate(`/simulations/town/${townId}`);
                 mutate(`/simulations/${sims?.[0]?.id}`);
             }

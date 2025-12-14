@@ -18,7 +18,7 @@ ns = Namespace('burst-risk', description='Predict pipe burst risk using trained 
 MODEL_PATH = Path(__file__).resolve().parent.parent / "core" / "ai" / "burst" / "pipe_burst_model.pkl"
 
 if not MODEL_PATH.exists():
-    raise FileNotFoundError(f"❌ Missing ML model file at {MODEL_PATH}")
+    raise FileNotFoundError(f"Missing ML model file at {MODEL_PATH}")
 
 data = joblib.load(MODEL_PATH)
 if isinstance(data, dict):
@@ -28,9 +28,9 @@ else:
     model = data
     scaler = None
 
-print(f"✅ Loaded burst model from {MODEL_PATH.resolve()}")
+print(f"Loaded burst model from {MODEL_PATH.resolve()}")
 if scaler:
-    print("📏 Using trained scaler for normalization")
+    print("Using trained scaler for normalization")
 
 # -----------------------------
 # 2️⃣ Features used for prediction
@@ -63,10 +63,10 @@ class BurstRiskPredict(Resource):
         # Try to find the latest simulation
         sim = Simulation.query.filter_by(town_id=town_id).order_by(Simulation.id.desc()).first()
         if sim and sim.details:
-            print(f"📊 Using existing simulation for town {town_id} (Simulation ID {sim.id})")
+            print(f"Using existing simulation for town {town_id} (Simulation ID {sim.id})")
             results = sim.details
         else:
-            print(f"⚙️ No simulation found for town {town_id} — running a fresh one...")
+            print(f"No simulation found for town {town_id} — running a fresh one...")
             try:
                 results = run_simulation(town.data)
                 sim = Simulation(

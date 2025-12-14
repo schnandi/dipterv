@@ -3,4 +3,4 @@ matplotlib
 scipy
 shapely
 pillow
-noise
+perlin_noise

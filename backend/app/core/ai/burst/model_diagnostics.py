@@ -54,7 +54,7 @@ def load_model(path=MODEL_PATH):
         model = data
         scaler = None
 
-    print(f"✅ Loaded model from {path}")
+    print(f"Loaded model from {path}")
     return model, scaler
 
 
@@ -82,12 +82,12 @@ def analyze_feature_importance(model, feature_names):
         plt.show(block=False)
         plt.pause(0.001)
     else:
-        print("⚠️ Model has no feature_importances_ attribute.")
+        print("Model has no feature_importances_ attribute.")
 
 
 def analyze_calibration(df, probs):
     if "burst" not in df.columns:
-        print("⚠️ No ground-truth 'burst' column found, skipping calibration.")
+        print("No ground-truth 'burst' column found, skipping calibration.")
         return
 
     y_true = df["burst"].values
@@ -105,7 +105,7 @@ def analyze_calibration(df, probs):
     plt.pause(0.001)
 
     auc = roc_auc_score(y_true, probs)
-    print(f"🏁 ROC-AUC Score: {auc:.3f}")
+    print(f"ROC-AUC Score: {auc:.3f}")
 
     fpr, tpr, _ = roc_curve(y_true, probs)
     plt.figure(figsize=(5, 5))
@@ -126,10 +126,10 @@ def main():
 
     # --- Load either CSV or JSON simulation ---
     if os.path.exists(DATA_PATH):
-        print(f"📄 Using training dataset at {DATA_PATH}")
+        print(f"Using training dataset at {DATA_PATH}")
         df = pd.read_csv(DATA_PATH)
     elif os.path.exists(SIMULATION_CACHE):
-        print(f"🧪 Using cached simulation results at {SIMULATION_CACHE}")
+        print(f"Using cached simulation results at {SIMULATION_CACHE}")
         with open(SIMULATION_CACHE, "r") as f:
             sim_data = json.load(f)
 
@@ -161,7 +161,7 @@ def main():
             })
 
         df = pd.DataFrame(rows)
-        print(f"📊 Loaded {len(df)} pipe rows from cached simulation")
+        print(f"Loaded {len(df)} pipe rows from cached simulation")
     else:
         raise FileNotFoundError("No valid dataset found (CSV or JSON).")
 
@@ -172,17 +172,17 @@ def main():
     else:
         X_scaled = X
 
-    print("🔍 Predicting burst probabilities...")
+    print("Predicting burst probabilities...")
     probs = model.predict_proba(X_scaled)[:, 1]
     df["burst_risk"] = probs
 
-    print("📈 Stats:")
+    print("Stats:")
     print(df["burst_risk"].describe())
 
     analyze_distribution(df, probs)
     analyze_feature_importance(model, FEATURES)
     analyze_calibration(df, probs)
-    print("✅ All plots generated. Close the figures to exit.")
+    print("All plots generated. Close the figures to exit.")
     plt.show(block=True)
 
 

@@ -110,7 +110,7 @@ def analyze_simulation(city_data, town_id):
 
 
 # -----------------------------
-# 3️⃣ Multi-town Dataset Builder
+# Multi-town Dataset Builder
 # -----------------------------
 def generate_burst_dataset(city_generator_func, n_towns=20, out_path="burst_training_data.csv"):
     """
@@ -119,12 +119,12 @@ def generate_burst_dataset(city_generator_func, n_towns=20, out_path="burst_trai
     """
     all_dfs = []
     for i in range(n_towns):
-        print(f"🏙️ Simulating town {i+1}/{n_towns}...")
+        print(f"Simulating town {i+1}/{n_towns}...")
         city_data = city_generator_func()
         df = analyze_simulation(city_data, i)
         all_dfs.append(df)
 
     dataset = pd.concat(all_dfs, ignore_index=True)
     dataset.to_csv(out_path, index=False)
-    print(f"✅ Dataset saved to {Path(out_path).resolve()} ({len(dataset)} rows)")
+    print(f"Dataset saved to {Path(out_path).resolve()} ({len(dataset)} rows)")
     return dataset

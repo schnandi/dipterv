@@ -70,14 +70,14 @@ class BuildingPlanner:
                 corners = [tuple(center + rot @ r) for r in rel]
                 new_poly = Polygon(corners)
 
-                # 🔒 collision checks
+                #collision checks
                 if any(new_poly.intersects(Polygon(b.corners)) for b in existing_buildings):
                     continue
 
                 if any(new_poly.intersects(LineString([r.start, r.end])) for r in self.network.roads):
                     continue
 
-                # ✅ Safe to place
+                # Safe to place
                 b = Building(tuple(center), w, h, angle, corners)
                 self.buildings.append(b)
                 existing_buildings.append(b)
